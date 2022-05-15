@@ -55,14 +55,6 @@ mean_weeks_complaints = d_knee_perplayer %>%
   left_join(n_weeks_perplayer, by = "PlayerID") %>% 
   mutate(prop = n/denom, mean_prop = mean(prop))
 
-
-# fill OSTRC questionnaires up so that they pertain for a whole week
-d_all = d_all %>% 
-  fill(starts_with("knee"), 
-       starts_with("Shoulder"), 
-       starts_with("LowBack"), 
-       .direction = "up")
-
 # only questions 2 and 3 pertain to substantial injuries, 
 # and only if they answered reply number 3 or 4
 # our data is structured for severity scores, 
