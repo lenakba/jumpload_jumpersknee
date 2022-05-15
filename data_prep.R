@@ -8,6 +8,14 @@ d_all = d_all %>% tibble()
 
 # need to convert integer to date, excel origin date is 1899-12-30
 d_all$Date = as.Date(d_all$Date,format="%Y-%m-%d", origin = "1899-12-30")
+d_all = d_all %>% mutate(year = lubridate::year(Date))
+
+# make season-year variable
+d_all = d_all %>% mutate(season = 
+                          case_when(TeamSeason == "A-1" | TeamSeason == "B-1" | TeamSeason == "C-1" | TeamSeason == "D-1" ~ "2017/2018", 
+                                    TeamSeason == "A-2" | TeamSeason == "B-2" | TeamSeason == "D-2" ~ "2018/2019",
+                                    TeamSeason == "A-3" ~ "2019/2020")) 
+
 
 # fix so "-" means NA
 d_all = d_all %>%mutate_if(is.character, funs(ifelse(. == "-", is.na(.), .)))
@@ -37,7 +45,6 @@ d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 
                          inj_lowback = ifelse(LowBack_1 >= 1| LowBack_2 >= 1 | LowBack_3 >= 1 | LowBack_4 >= 1, 1, 0),
                          inj_lowback_subst = ifelse(LowBack_2 >= 17 | LowBack_3 >= 17, 1, 0))
 
-
 # write csv to read in other scripts
 # write .csv
 # write_delim is preferable, but write_excel_csv is required for excel to understand
@@ -65,13 +72,16 @@ d_all %>% count(MatchParticipation)
   
 # trends. Does there seem to be a season effect?
 # only looking at days that players play volleyball (match or training)
+# see if there is any pattern in the injuries
 d_mean_day = d_all %>% filter(SessionType != "no volleyball") %>% 
-              group_by(Date) %>% summarise(mean_jumps = mean(jumps_n), 
-                                           mean_height = mean(jump_height_sum, na.rm = TRUE))
-
+              group_by(Date, season) %>% summarise(mean_jumps = mean(jumps_n), 
+                                           mean_height = mean(jump_height_sum, na.rm = TRUE),
+                                           sum_injuries = sum(inj_knee, na.rm = TRUE))
 
 ggplot(d_mean_day, aes(x = Date, y = mean_jumps)) +
-  geom_line()
+  facet_wrap(~season) +
+  geom_line(size = 1) +
+  geom_point(aes(x = Date, y = sum_injuries))
 
 ggplot(d_mean_day, aes(x = Date, y = mean_height)) +
   geom_line()
