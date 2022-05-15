@@ -19,11 +19,26 @@ d_all = d_all %>%mutate(SessionType = ifelse(is.na(SessionType), "no volleyball"
 # calculate sum of jump heights
 d_all = d_all %>%mutate(jump_height_sum = jump_height_avg_cm*jumps_n)
 
+# fill OSTRC questionnaires up so that they eprtain for a whole week
+d_all = d_all %>% 
+  fill(starts_with("knee"), 
+       starts_with("Shoulder"), 
+       starts_with("LowBack"), 
+       .direction = "up")
+
+# only questions 2 and 3 pertain to substantial injuries, 
+# and only if they answered reply number 3 or 4
+# our data is structured for severity scores, 
+# and have the options 0, 8, 17, 25, equaling response number 1, 2, 3, or 4
+d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 1 | Knee_4 >= 1, 1, 0),
+                 inj_knee_subst = ifelse(Knee_2 >= 17 | Knee_3 >= 17, 1, 0))
+
+
 # write csv to read in other scripts
 # write .csv
 # write_delim is preferable, but write_excel_csv is required for excel to understand
 # that the file encoding is UTF-8
-write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
+# write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 
 
 # checking that no jump height sums are unrealistically extreme
@@ -46,8 +61,9 @@ d_all %>% count(MatchParticipation)
   
 # trends. Does there seem to be a season effect?
 # only looking at days that players play volleyball (match or training)
-d_mean_day = d_all %>% filter(SessionType != "no volleyball") %>% group_by(Date) %>% summarise(mean_jumps = mean(jumps_n), 
-                                                    mean_height = mean(jump_height_sum, na.rm = TRUE))
+d_mean_day = d_all %>% filter(SessionType != "no volleyball") %>% 
+              group_by(Date) %>% summarise(mean_jumps = mean(jumps_n), 
+                                           mean_height = mean(jump_height_sum, na.rm = TRUE))
 
 
 ggplot(d_mean_day, aes(x = Date, y = mean_jumps)) +
