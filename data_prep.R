@@ -9,6 +9,7 @@ d_all = d_all %>% tibble()
 # need to convert integer to date, excel origin date is 1899-12-30
 d_all$Date = as.Date(d_all$Date,format="%Y-%m-%d", origin = "1899-12-30")
 d_all = d_all %>% mutate(year = lubridate::year(Date))
+d_all = d_all %>% mutate(month_day = format(as.Date(d_all$Date,format="%Y-%m-%d"), format = "%m-%d")) 
 
 # make season-year variable
 d_all = d_all %>% mutate(season = 
@@ -27,6 +28,34 @@ d_all = d_all %>%mutate(SessionType = ifelse(is.na(SessionType), "no volleyball"
 # calculate sum of jump heights
 d_all = d_all %>%mutate(jump_height_sum = jump_height_avg_cm*jumps_n)
 
+d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 1 | Knee_4 >= 1, 1, 0),
+                         inj_knee_subst = ifelse(Knee_2 >= 17 | Knee_3 >= 17, 1, 0),
+                         inj_shoulder = ifelse(Shoulder_1 >= 1| Shoulder_2 >= 1 | Shoulder_3 >= 1 | Shoulder_4 >= 1, 1, 0),
+                         inj_shoulder_subst = ifelse(Shoulder_2 >= 17 | Shoulder_3 >= 17, 1, 0),
+                         inj_lowback = ifelse(LowBack_1 >= 1| LowBack_2 >= 1 | LowBack_3 >= 1 | LowBack_4 >= 1, 1, 0),
+                         inj_lowback_subst = ifelse(LowBack_2 >= 17 | LowBack_3 >= 17, 1, 0))
+
+# number of knee complaint cases
+d_all %>% summarise(sum(inj_knee == 1, na.rm = TRUE))
+
+# how many players have symptoms?
+d_knee_perplayer = d_all %>% count(PlayerID, inj_knee) 
+
+d_knee_perplayer %>% group_by(PlayerID) %>% 
+  summarise(injured = sum(inj_knee == 1, na.rm = TRUE)) %>% 
+  count(injured)
+
+# number of players who had complaints for more than 1 week
+d_knee_perplayer %>% filter(inj_knee == 1) %>% summarise(sum(n>=2))
+
+n_weeks_perplayer = d_knee_perplayer %>% filter(!is.na(inj_knee)) %>% group_by(PlayerID) %>% summarise(denom = sum(n))
+
+mean_weeks_complaints = d_knee_perplayer %>% 
+  filter(inj_knee == 1) %>% 
+  left_join(n_weeks_perplayer, by = "PlayerID") %>% 
+  mutate(prop = n/denom, mean_prop = mean(prop))
+
+
 # fill OSTRC questionnaires up so that they pertain for a whole week
 d_all = d_all %>% 
   fill(starts_with("knee"), 
@@ -38,12 +67,9 @@ d_all = d_all %>%
 # and only if they answered reply number 3 or 4
 # our data is structured for severity scores, 
 # and have the options 0, 8, 17, 25, equaling response number 1, 2, 3, or 4
-d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 1 | Knee_4 >= 1, 1, 0),
-                         inj_knee_subst = ifelse(Knee_2 >= 17 | Knee_3 >= 17, 1, 0),
-                         inj_shoulder = ifelse(Shoulder_1 >= 1| Shoulder_2 >= 1 | Shoulder_3 >= 1 | Shoulder_4 >= 1, 1, 0),
-                         inj_shoulder_subst = ifelse(Shoulder_2 >= 17 | Shoulder_3 >= 17, 1, 0),
-                         inj_lowback = ifelse(LowBack_1 >= 1| LowBack_2 >= 1 | LowBack_3 >= 1 | LowBack_4 >= 1, 1, 0),
-                         inj_lowback_subst = ifelse(LowBack_2 >= 17 | LowBack_3 >= 17, 1, 0))
+
+# number of days with jumper's knee
+d_all %>% summarise(sum(inj_knee == 1, na.rm = TRUE))
 
 # write csv to read in other scripts
 # write .csv
@@ -70,18 +96,21 @@ d_all %>% count(SessionType)
 d_all %>% count(Season.Phase)
 d_all %>% count(MatchParticipation) 
   
+d_all %>% count(Season.Phase)
+
+
 # trends. Does there seem to be a season effect?
 # only looking at days that players play volleyball (match or training)
 # see if there is any pattern in the injuries
 d_mean_day = d_all %>% filter(SessionType != "no volleyball") %>% 
-              group_by(Date, season) %>% summarise(mean_jumps = mean(jumps_n), 
+              group_by(Date, year, season, month_day) %>% summarise(mean_jumps = mean(jumps_n), 
                                            mean_height = mean(jump_height_sum, na.rm = TRUE),
-                                           sum_injuries = sum(inj_knee, na.rm = TRUE))
+                                           sum_injuries = sum(inj_knee, na.rm = TRUE)) %>% ungroup()
 
-ggplot(d_mean_day, aes(x = Date, y = mean_jumps)) +
-  facet_wrap(~season) +
+ggplot(d_mean_day, aes(x = month_day, y = mean_jumps, group = 1)) +
+  facet_wrap(~year) +
   geom_line(size = 1) +
-  geom_point(aes(x = Date, y = sum_injuries))
+  geom_point(aes(x = month_day, y = sum_injuries))
 
 ggplot(d_mean_day, aes(x = Date, y = mean_height)) +
   geom_line()
