@@ -19,7 +19,7 @@ d_all = d_all %>%mutate(SessionType = ifelse(is.na(SessionType), "no volleyball"
 # calculate sum of jump heights
 d_all = d_all %>%mutate(jump_height_sum = jump_height_avg_cm*jumps_n)
 
-# fill OSTRC questionnaires up so that they eprtain for a whole week
+# fill OSTRC questionnaires up so that they pertain for a whole week
 d_all = d_all %>% 
   fill(starts_with("knee"), 
        starts_with("Shoulder"), 
