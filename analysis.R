@@ -6,6 +6,9 @@ data_folder = "D:\\phd\\jump load\\data\\"
 
 d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 
+# baseline injuries
+
+
 #------------------------------weekly training load sums-------------------
 
 # First, we calculate weekly sums of number of jumps and jump heights
@@ -15,6 +18,11 @@ d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = ""
 # The biggest limitation is that the current day of training has special properties
 # compared to past training, also past training in the current week.
 # We can still consider the effects of past daily training load before the current week.
+
+
+d_nested_player = d_all %>% group_by(PlayerID) %>% nest()
+d_nested_player$data %>% map(. %>% slice(1:7) %>% select(Date, inj_knee))
+
 
 # Fetch dates in which the OSTRC was collected
 d_all = d_all %>% mutate(ostrc_day = ifelse(is.na(Knee_Total), 0, 1))
