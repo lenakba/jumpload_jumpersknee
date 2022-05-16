@@ -20,28 +20,21 @@ nested_list = d_all %>% group_by(PlayerID) %>% nest()
 nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jumps_n))
 d_unnest = unnest(nested_list, cols = c(data)) %>% ungroup()  %>% mutate(index = 1:n())
 
-nested_list_date = d_all %>% group_by(PlayerID) %>% nest()
-nested_list_date$data = nested_list_date$data %>% 
-                   map(. %>% slice(-(1:6)) %>% 
-                       slice(which(row_number() %% 7 == 1)))
-d_unnest_date = unnest(nested_list_date, cols = c(data)) %>% ungroup() %>%
-  select(PlayerID, Date) %>% mutate(index = 1:n())
+# fetch dates in which the OSTRC was collected
+d_all = d_all %>% mutate(ostrc_day = ifelse(is.na(Knee_Total), 0, 1))
+d_ostrc_dates = d_all %>% group_by(PlayerID) %>% filter(ostrc_day == 1) %>% mutate(index = 1:n()) %>% select(PlayerID, Date, index)
 
-d_weekly_load = d_unnest_date %>% left_join(d_unnest, by = c("PlayerID", "index")) %>% rename(weekly_jump_n = data) %>% select(-index)
-
+d_weekly_load = d_ostrc_dates %>% 
+  left_join(d_unnest, by = c("PlayerID", "index")) %>% 
+  rename(jumps_n_weekly = data) %>% 
+  select(-index)
 d_weekly = d_all %>% left_join(d_weekly_load, by = c("PlayerID", "Date"))
 
-
-first_sum = 1 525  
-slide_sum(ting$jumps_n)
-
-l = slide(ting$jumps_n, ~sum(.), .before = 6, step = 7, .complete = TRUE)
-unlist(l)  
-
-
+# check that its correct
+d_weekly %>% select(Date, PlayerID, jumps_n, jumps_n_weekly)
 
 # load data summed per week, but with past load data available
-d_all 
+
 
 # injury data structered in intervals
 d_all %>% select(Date, starts_with("inj"))
