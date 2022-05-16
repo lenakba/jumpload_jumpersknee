@@ -16,6 +16,28 @@ d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = ""
 # compared to past training, also past training in the current week.
 # We can still consider the effects of past daily training load before the current week.
 
+# Fetch dates in which the OSTRC was collected
+d_all = d_all %>% mutate(ostrc_day = ifelse(is.na(Knee_Total), 0, 1))
+d_ostrc_dates = d_all %>% group_by(PlayerID) %>% filter(ostrc_day == 1) %>% select(Date, PlayerID)
+
+# every 7th date after the first OSTRC was supposed to be filled
+
+
+example_player_dates = d_ostrc_dates %>% filter(PlayerID == 1)
+
+example_player = d_all %>% filter(PlayerID == 1) %>% select(Date, jumps_n, PlayerID)
+
+
+example_player %>% 
+  mutate(jumps_weekly_n = 
+           slide_dbl(jumps_n, ~sum(.), .before = 6, step = 7, complete = TRUE)) %>% View()
+
+slide_index_dbl(example_player, example_player$Date, sum, .before = lubridate::days(6))
+
+?slide_index_dbl
+slide_period(example_player, example_player$Date, "week", ~.x)
+
+
 # function to calculate sums across a user-specified window size
 slide_sum = function(x, window_size){
   l = slide(x, ~sum(.), .before = 6, step = window_size, .complete =TRUE)
@@ -29,7 +51,7 @@ window = 7
 
 # First step is to test that our automated function 
 # for calculating weekly sums (slide_sum) calculates correctly. 
-example_player = d_all %>% filter(PlayerID == 1) %>% select(Date, jumps_n, PlayerID)
+example_player = d_all %>% filter(PlayerID == 1) %>% select(Date, jumps_n, PlayerID, inj_knee)
 
 # manual calculation of first 3 weekly sums
 v_correct = c(
@@ -39,21 +61,33 @@ v_correct = c(
 )
 
 # function above used to calculate weekly sums
-test_loads = (example_player %>% pull(jumps_n))[1:21]
+test_loads = (example_player %>% pull(jumps_n))[1:(window*3)]
 v_calc = slide_sum(test_loads, window)
 
 # test that the output from the function equals the manual calculation
 testthat::expect_equal(v_correct, v_calc)
 
 # Next step is to perform the calculation on the data
-# Fetch dates in which the OSTRC was collected
-d_all = d_all %>% mutate(ostrc_day = ifelse(is.na(Knee_Total), 0, 1))
-d_ostrc_dates = d_all %>% group_by(PlayerID) %>% filter(ostrc_day == 1) %>% pull(Date)
-
 # We nest on each player in the data so that weekly sum-calculation
 # does not slide over different players
 nested_list = d_all %>% group_by(PlayerID) %>% nest()
 l_weekly_sums = nested_list$data %>% map(., ~slide_sum(.$jumps_n, window))
+
+example_sums = l_weekly_sums[[1]]
+example_player_dates = d_ostrc_dates %>% filter(PlayerID == 1)
+
+example_player %>% pull(Date)
+
+example_player %>% View()
+
+
+length(example_sums)
+length(example_player_dates$Date)
+
+example_player = d_all %>% filter(PlayerID == 1) %>% select(Date, jumps_n, PlayerID)
+
+
+
 
 # we combine the sums to the original data
 # but we only include the dates where OSTRC was collected
