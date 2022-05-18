@@ -18,8 +18,8 @@ d_all = d_all %>% mutate(season =
                                     TeamSeason == "A-3" ~ "2019/2020")) 
 
 
-# fix so "-" means NA
-d_all = d_all %>%mutate_if(is.character, funs(ifelse(. == "-", is.na(.), .)))
+# fix so "-" means not applicable
+d_all = d_all %>%mutate_if(is.character, funs(ifelse(. == "-", "not applicable", .)))
 
 # add match variable and fix missing session-types
 d_all = d_all %>%mutate(Match = as.character(ifelse(SessionType == "match", 1, 0)))
@@ -28,6 +28,7 @@ d_all = d_all %>%mutate(SessionType = ifelse(is.na(SessionType), "no volleyball"
 # calculate sum of jump heights
 d_all = d_all %>%mutate(jump_height_sum = jump_height_avg_cm*jumps_n)
 
+# add complaint yes/no variables
 d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 1 | Knee_4 >= 1, 1, 0),
                          inj_knee_subst = ifelse(Knee_2 >= 17 | Knee_3 >= 17, 1, 0),
                          inj_shoulder = ifelse(Shoulder_1 >= 1| Shoulder_2 >= 1 | Shoulder_3 >= 1 | Shoulder_4 >= 1, 1, 0),
@@ -55,6 +56,13 @@ mean_weeks_complaints = d_knee_perplayer %>%
   left_join(n_weeks_perplayer, by = "PlayerID") %>% 
   mutate(prop = n/denom, mean_prop = mean(prop))
 
+# how many our missing the OSTRC questionnaire?
+d_ostrc_completed = d_all %>% select(starts_with("completed")) %>% filter(!is.na(completed_team_ostrc))
+nrow(d_ostrc_completed)
+ 
+# missing on completed variable means that the response was missing
+d_ostrc_completed %>% filter(is.na(completed_today_Knee_OSTRC))
+
 # only questions 2 and 3 pertain to substantial injuries, 
 # and only if they answered reply number 3 or 4
 # our data is structured for severity scores, 
@@ -75,6 +83,9 @@ d_jump_height_test = d_all %>% select(Date, PlayerID, jumps_n, jump_height_sum) 
                                mutate(max_height_possible = jumps_n * 120,
                                within_limits_no = ifelse(jump_height_sum <= max_height_possible, 0, 1))
 n_errors = d_jump_height_test %>% summarise(n_errors = sum(within_limits_no == 1, na.rm = TRUE))
+
+
+
 
 # look at histograms. Any negative values or other abnormalities?
 hist(d_all$jumps_n)
