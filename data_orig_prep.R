@@ -32,6 +32,11 @@ d_original = d_original %>% mutate(time_seconds = as.numeric(time_seconds),
                       datetime = as.POSIXct(datetime),
                       date = as_date(date))
 
+# write to .csv file
+write_excel_csv(d_original, 
+                "data_per_jump.csv", 
+                delim = ";", na = "")
+
 baseline = sheets[!sheets %in% load_sheets]
 d_baseline = read_excel(paste0(data_folder, file_name), sheet = baseline, skip = 2)
 
