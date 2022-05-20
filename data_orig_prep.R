@@ -8,9 +8,6 @@ sheets = excel_sheets(paste0(data_folder, file_name))
 # read all sheets in file
 load_sheets = sheets[which(str_detect(sheets, "[[:alpha:]]-\\d"))]
 d_original = data.frame()
-v_names = names(read_excel(paste0(data_folder, file_name), sheet = 1)) # to rearrange in same order
-
-
 for(i in load_sheets){
   if(i == "B-1" | i == "B-2"){
     temp_data = read_excel(paste0(data_folder, file_name), sheet = i, skip = 1)
