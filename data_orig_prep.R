@@ -22,10 +22,12 @@ for(i in load_sheets){
 # this is because they had a practice and match on the same day
 # B was the only Team that registered data at the session-level
 # all other teams registered at the daily level
-d_original = d_original %>% mutate(SessionType = 
-  ifelse((SessionType == "practice") & (GameClassification == "G3" |GameClassification == "G4"), 
+d_original = d_original %>% 
+  mutate(GameClassification = ifelse(is.na(GameClassification), "P", GameClassification))
+d_original = d_original %>% 
+  mutate(SessionType = 
+  ifelse((Team_ID == "B") & (GameClassification == "G3" | GameClassification == "G4" | GameClassification == "G5"), 
          "match", SessionType))
-
 
 improved_names = c("date", "datetime", "time_seconds", "jump_height", "match_number", "session_type", 
   "jump_height_max", "jump_height_max_percent", "position", "game_type", "imputed", 
