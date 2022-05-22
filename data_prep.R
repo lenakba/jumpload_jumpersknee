@@ -19,7 +19,7 @@ d_all = d_all %>% mutate(season =
 
 
 # fix so "-" means not applicable
-d_all = d_all %>%mutate_if(is.character, funs(ifelse(. == "-", "not applicable", .)))
+d_all = d_all %>%mutate_if(is.character, ~ifelse(. == "-", "not applicable", .))
 
 # add match variable and fix missing session-types
 d_all = d_all %>%mutate(Match = as.character(ifelse(SessionType == "match", 1, 0)))
@@ -117,8 +117,24 @@ d_daily = d_all %>% select(key_cols,
                  age,
                 starts_with("Match"))
 
-read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na = "")
+# column specs for jump data
+jump_level_cols = cols(
+  .default = col_double(),
+  date = col_date(format = ""),
+  datetime = col_datetime(format = "%Y-%m-%d %H:%M:%OS"),
+  match_number = col_character(),
+  session_type = col_character(),
+  position = col_character(),
+  game_type = col_character(),
+  imputed = col_character(),
+  id_team_player = col_character(),
+  id_team = col_character(),
+  id_season = col_character(),
+  height_KE_updated = col_character()
+)
 
+d_jump_all = read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na = "", col_types = jump_level_cols)
+d_jump_all = d_jump_all %>% mutate(session_type = ifelse(is.na(session_type), "no volleyball", session_type))
 
 #---------------------------------------------------trends--------------------------------------
 
