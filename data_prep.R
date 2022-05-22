@@ -135,7 +135,29 @@ jump_level_cols = cols(
 
 d_jump_all = read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na = "", col_types = jump_level_cols)
 d_jump_all = d_jump_all %>% mutate(session_type = ifelse(is.na(session_type), "no volleyball", session_type))
+d_jump_all = d_jump_all %>% mutate(imputed = ifelse(is.na(imputed), "No", imputed))
+d_jump_all = d_jump_all %>% mutate(jump_height = ifelse(imputed == "Yes", NA, jump_height))
 
+# how many missing jump heights?
+d_jump_all %>% summarise(n_m_height = sum(is.na(jump_height)),
+                         denom = n(),
+                         prop = n_m_height/denom,
+                         perc = 100*prop)
+
+
+# missing jumps?
+d_jump_all = d_jump_all %>% mutate(n_jump = 1) %>% 
+  group_by(id_player, date) %>% 
+  mutate(n_jumps_daily = sum(n_jump),
+         n_jumps_daily = ifelse(session_type == "no volleyball", 0, n_jumps_daily)) %>% ungroup()
+
+d_jump_all %>% filter(session_type == "match" | 
+                      session_type == "practice", n_jumps_daily <= 30) 
+
+
+d_all %>% filter(session_type == "match" | 
+                 session_type == "practice", jumps_n == 0, 
+                 MatchParticipation == "Significant Contributor") 
 #---------------------------------------------------trends--------------------------------------
 
 
