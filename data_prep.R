@@ -144,7 +144,6 @@ d_jump_all %>% summarise(n_m_height = sum(is.na(jump_height)),
                          prop = n_m_height/denom,
                          perc = 100*prop)
 
-
 # missing jumps?
 d_jump_all = d_jump_all %>% mutate(n_jump = 1) %>% 
   group_by(id_player, date) %>% 
@@ -158,6 +157,14 @@ d_jump_all %>% filter(session_type == "match" |
 d_all %>% filter(session_type == "match" | 
                  session_type == "practice", jumps_n == 0, 
                  MatchParticipation == "Significant Contributor") 
+
+# join jump-level data with daily and weekly data
+d_jump = d_jump_all %>% left_join(d_daily, by = key_cols) %>% select(-match_number)
+
+write_excel_csv(d_jump, 
+                "d_jump.csv", 
+                delim = ";", na = "")
+
 #---------------------------------------------------trends--------------------------------------
 
 
