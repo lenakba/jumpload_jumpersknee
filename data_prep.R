@@ -1,9 +1,9 @@
 library(tidyverse)
-library(readxlsb)
+library(readxl)
 
 data_folder = "D:\\phd\\jump load\\data\\"
 
-d_all = read_xlsb(paste0(data_folder, "Final Data Set_Daily_Weekly_Pre.xlsb"), "FDS_Daily_Pre_All", na = "", skip = 4, locale = locale(date_format = "%d.%m.%Y", encoding = "UTF-8"))
+d_all = read_excel(paste0(data_folder, "Final Data Set_Daily_Weekly_Pre.xlsx"), "FDS_Daily_Pre_All", na = "", skip = 4)
 d_all = d_all %>% tibble()
 
 # need to convert integer to date, excel origin date is 1899-12-30
@@ -84,9 +84,6 @@ d_jump_height_test = d_all %>% select(Date, PlayerID, jumps_n, jump_height_sum) 
                                within_limits_no = ifelse(jump_height_sum <= max_height_possible, 0, 1))
 n_errors = d_jump_height_test %>% summarise(n_errors = sum(within_limits_no == 1, na.rm = TRUE))
 
-
-
-
 # look at histograms. Any negative values or other abnormalities?
 hist(d_all$jumps_n)
 hist(d_all$jump_height_sum)
@@ -96,10 +93,34 @@ hist(d_all$TotalDailyKELoadIndex)
 d_all %>% count(Team)
 d_all %>% count(Position)
 d_all %>% count(SessionType)
-d_all %>% count(Season.Phase)
+d_all %>% count(`Season Phase`)
 d_all %>% count(MatchParticipation) 
-  
-d_all %>% count(Season.Phase)
+
+#---------------------------------------------------exposure data
+
+key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
+d_all = d_all %>% rename(date = Date, 
+                         id_team = Team, 
+                         season_phase = `Season Phase`,
+                         id_season = TeamSeason,  
+                         id_team_player = Team_Player_ID,
+                         id_player = PlayerID,
+                         session_type = SessionType)
+
+d_daily = d_all %>% select(key_cols, 
+                 starts_with("Knee"), 
+                 starts_with("Shoulder"), 
+                 starts_with("LowBack"), 
+                 starts_with("inj"), 
+                 year, month_day, season, 
+                 season_phase,
+                 age,
+                starts_with("Match"))
+
+read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na = "")
+
+
+#---------------------------------------------------trends--------------------------------------
 
 
 # trends. Does there seem to be a season effect?
