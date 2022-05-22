@@ -21,7 +21,7 @@ for(i in load_sheets){
 improved_names = c("date", "datetime", "time_seconds", "jump_height", "match_number", "session_type", 
   "jump_height_max", "jump_height_max_percent", "position", "game_type", "imputed", 
   "jump_height_max_0.1", "jump_height_max_percent_0.1", "id_team_player", 
-  "id_player", "id_team", "season", "weight", "height_ke_modified", "load_index_KE", "height_KE_updated")
+  "id_player", "id_team", "id_season", "weight", "height_ke_modified", "load_index_KE", "height_KE_updated")
 colnames(d_original) = improved_names
 
 # fix dates and times
@@ -30,7 +30,7 @@ d_original = d_original %>% mutate(time_seconds = as.numeric(time_seconds),
                       datetime = str_extract(datetime, 
                       "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2} [0-9]{2}\\:[0-9]{2}\\:[0-9]{2}\\.[0-9]{3}"),
                       datetime = as.POSIXct(datetime),
-                      date = as_date(date))
+                      date = lubridate::as_date(date))
 
 # write to .csv file
 write_excel_csv(d_original, 
