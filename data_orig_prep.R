@@ -2,7 +2,7 @@ library(tidyverse)
 library(readxl)
 
 data_folder = "D:\\phd\\jump load\\data\\"
-file_name = "Raw Jump Data.xlsx"
+file_name = "Raw Jump Data Imputationfix.xlsx"
 sheets = excel_sheets(paste0(data_folder, file_name))
 
 # read all sheets in file
@@ -42,6 +42,9 @@ d_original = d_original %>% mutate(time_seconds = as.numeric(time_seconds),
                       "[0-9]{4}\\-[0-9]{2}\\-[0-9]{2} [0-9]{2}\\:[0-9]{2}\\:[0-9]{2}\\.[0-9]{3}"),
                       datetime = as.character(as.POSIXct(datetime, format = "%Y-%m-%d %H:%M:%OS")),
                       date = lubridate::as_date(date))
+
+# three days were device test days for Team A, and should not be included in the full data
+d_original = d_original %>% filter(date != "2019-08-04", date != "2019-08-03", date != "2019-08-01")
 
 # write to .csv file
 write_excel_csv(d_original, 
