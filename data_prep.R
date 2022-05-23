@@ -113,13 +113,20 @@ d_unimputed = d_jump_all %>% filter(imputed == "No")
 d_unimputed = 
   d_unimputed %>% mutate(n_jump = 1) %>% 
   group_by(id_player, date) %>% 
-  mutate(n_jumps_daily = sum(n_jump),
-         n_jumps_daily = ifelse(session_type == "no volleyball", 0, n_jumps_daily),
+  mutate(jump_daily_n = sum(n_jump),
+         jump_daily_n = ifelse(session_type == "no volleyball", 0, jump_daily_n),
          jump_height_sum = sum(jump_height, na.rm = TRUE),
          jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)) %>% ungroup()
 
 d_unimputed_daily = d_unimputed %>% 
   distinct(date, id_player, id_team, id_team_player, id_season, session_type, .keep_all = TRUE)
+
+d_unimputed_daily = d_unimputed_daily %>% select(key_cols, game_type, jump_daily_n, 
+                             jump_height_sum, jump_height_max, 
+                             jump_height_max_percent,
+                             height_ke_modified, load_index_KE, height_KE_updated,
+                             weight, position)
+
 
 d_daily = d_daily %>% mutate(id_player = as.character(id_player))
 
@@ -127,17 +134,17 @@ d_daily = d_daily %>% mutate(id_player = as.character(id_player))
 d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 
 d_daily_jumps = d_daily_jumps %>% 
-  mutate(n_jumps_daily = ifelse(session_type == "no volleyball", 0, n_jumps_daily)) 
+  mutate(jump_daily_n = ifelse(session_type == "no volleyball", 0, jump_daily_n)) 
 
 d_daily_jumps %>% 
-  summarise(n_missing_daily = sum(is.na(n_jumps_daily)), 
+  summarise(n_missing_daily = sum(is.na(jump_daily_n)), 
                                   denom = n(), 
                                   prop = n_missing_daily/denom, 
                                   perc = 100*prop)
 
 
 write_excel_csv(d_daily_jumps, 
-                "d_jump.csv", 
+                "d_jump_daily.csv", 
                 delim = ";", na = "")
 
 # checking missing dates
