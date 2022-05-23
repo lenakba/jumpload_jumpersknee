@@ -59,16 +59,17 @@ d_all %>% count(SessionType)
 d_all %>% count(`Season Phase`)
 d_all %>% count(MatchParticipation) 
 
-#---------------------------------------------------exposure data
-
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season", "session_type")
+
+#---------------------------------------------------exposure data
 d_all = d_all %>% rename(date = Date, 
                          id_team = Team, 
                          season_phase = `Season Phase`,
                          id_season = TeamSeason,  
                          id_team_player = Team_Player_ID,
                          id_player = PlayerID,
-                         session_type = SessionType)
+                         session_type = SessionType,
+                         position = Position)
 
 d_daily = d_all %>% select(key_cols, 
                  starts_with("Knee"), 
@@ -77,7 +78,7 @@ d_daily = d_all %>% select(key_cols,
                  starts_with("inj"), 
                  year, month_day, season, 
                  season_phase,
-                 age,
+                 age, position,
                  starts_with("Match"),
                  session_type)
 remove(d_all)
@@ -110,6 +111,7 @@ d_jump_all %>% summarise(n_m_height = sum(imputed == "Yes"),
 
 # how about missing daily jumps?
 d_unimputed = d_jump_all %>% filter(imputed == "No") 
+
 d_unimputed = 
   d_unimputed %>% mutate(n_jump = 1) %>% 
   group_by(id_player, date) %>% 
@@ -125,16 +127,24 @@ d_unimputed_daily = d_unimputed_daily %>% select(key_cols, game_type, jump_daily
                              jump_height_sum, jump_height_max, 
                              jump_height_max_percent,
                              height_ke_modified, load_index_KE, height_KE_updated,
-                             weight, position)
+                             weight, 
+                             height)
+
 
 
 d_daily = d_daily %>% mutate(id_player = as.character(id_player))
 
+# fixme! 8000 jumps ish that don't have player ID
+# heights and weights calc wrong
 # join daily unimputed with the daily data
 d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 
 d_daily_jumps = d_daily_jumps %>% 
   mutate(jump_daily_n = ifelse(session_type == "no volleyball", 0, jump_daily_n)) 
+
+d_daily_jumps = d_daily_jumps %>% arrange(desc(height)) %>% group_by(id_player) %>% fill(height) %>% ungroup()
+d_daily_jumps = d_daily_jumps %>% arrange(desc(weight)) %>% group_by(id_player) %>% fill(weight) %>% ungroup()
+d_daily_jumps = d_daily_jumps %>% arrange(date)
 
 d_daily_jumps %>% 
   summarise(n_missing_daily = sum(is.na(jump_daily_n)), 
