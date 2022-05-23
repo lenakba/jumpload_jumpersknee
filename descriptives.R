@@ -60,8 +60,8 @@ col_specs = cols(
   Match = col_character()
 )
 
-d_full = read_delim(paste0(data_folder,"d_jump.csv"), delim = ";", na = "", col_types = col_specs)
-key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
+#d_full = read_delim(paste0(data_folder,"d_jump.csv"), delim = ";", na = "", col_types = col_specs)
+#key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 
 
 col_specs_daily = cols(
@@ -182,8 +182,14 @@ d_daily_nomissing %>% filter(season_phase != "Preseason") %>% group_by(Match) %>
 
 d_player = d_daily %>% distinct(id_player, .keep_all = TRUE)
 
+# 49, 36, 51, 48, 20 missing weight?
+d_player %>% select(id_player, weight) %>% tail()
+# 20 missing height?
+d_player %>% select(id_player, height) %>% tail()
+
 calc_descs(d_player, age)
 calc_descs(d_player, weight)
+calc_descs(d_player, height)
 calc_descs(d_player, jump_height_max)
 
 #----counts
