@@ -130,8 +130,6 @@ d_unimputed_daily = d_unimputed_daily %>% select(key_cols, game_type, jump_daily
                              weight, 
                              height)
 
-
-
 d_daily = d_daily %>% mutate(id_player = as.character(id_player))
 
 # fixme! 8000 jumps ish that don't have player ID
