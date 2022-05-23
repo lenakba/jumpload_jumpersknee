@@ -80,7 +80,7 @@ d_daily = d_all %>% select(key_cols,
                  age,
                  starts_with("Match"),
                  session_type)
-
+remove(d_all)
 # column specs for jump data
 jump_level_cols = cols(
   .default = col_double(),
@@ -91,6 +91,7 @@ jump_level_cols = cols(
   position = col_character(),
   game_type = col_character(),
   imputed = col_character(),
+  id_player = col_character(),
   id_team_player = col_character(),
   id_team = col_character(),
   id_season = col_character(),
@@ -98,34 +99,50 @@ jump_level_cols = cols(
 )
 
 d_jump_all = read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na = "", col_types = jump_level_cols)
-d_jump_all = d_jump_all %>% mutate(imputed = ifelse(is.na(imputed), "No", imputed))
-d_jump_all = d_jump_all %>% mutate(jump_height = ifelse(imputed == "Yes", NA, jump_height))
+#d_jump_all = d_jump_all %>% mutate(imputed = ifelse(is.na(imputed), "No", imputed))
+#d_jump_all = d_jump_all %>% mutate(jump_height = ifelse(imputed == "Yes", NA, jump_height))
 
 # how many missing jump heights?
-d_jump_all %>% summarise(n_m_height = sum(is.na(jump_height)),
+d_jump_all %>% summarise(n_m_height = sum(imputed == "Yes"),
                          denom = n(),
                          prop = n_m_height/denom,
                          perc = 100*prop)
 
-# missing jumps?
-d_jump_all = d_jump_all %>% mutate(n_jump = 1) %>% 
+# how about missing daily jumps?
+d_unimputed = d_jump_all %>% filter(imputed == "No") 
+d_unimputed = 
+  d_unimputed %>% mutate(n_jump = 1) %>% 
   group_by(id_player, date) %>% 
   mutate(n_jumps_daily = sum(n_jump),
-         n_jumps_daily = ifelse(session_type == "no volleyball", 0, n_jumps_daily)) %>% ungroup()
+         n_jumps_daily = ifelse(session_type == "no volleyball", 0, n_jumps_daily),
+         jump_height_sum = sum(jump_height, na.rm = TRUE),
+         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)) %>% ungroup()
 
-d_jump_all %>% filter(session_type == "match" | 
-                      session_type == "practice", n_jumps_daily <= 30) 
+d_unimputed_daily = d_unimputed %>% 
+  distinct(date, id_player, id_team, id_team_player, id_season, session_type, .keep_all = TRUE)
+
+d_daily = d_daily %>% mutate(id_player = as.character(id_player))
+
+# join daily unimputed with the daily data
+d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
+
+d_daily_jumps = d_daily_jumps %>% 
+  mutate(n_jumps_daily = ifelse(session_type == "no volleyball", 0, n_jumps_daily)) 
+
+d_daily_jumps %>% 
+  summarise(n_missing_daily = sum(is.na(n_jumps_daily)), 
+                                  denom = n(), 
+                                  prop = n_missing_daily/denom, 
+                                  perc = 100*prop)
 
 
-d_all %>% filter(session_type == "match" | 
-                 session_type == "practice", jumps_n == 0, 
-                 MatchParticipation == "Significant Contributor") 
+write_excel_csv(d_daily_jumps, 
+                "d_jump.csv", 
+                delim = ";", na = "")
 
-
+# checking missing dates
 dates_matchpractice = d_jump_all %>% filter(session_type == "match" | session_type == "practice" | session_type == "friendly") %>% distinct(date)
-
 dates_matchpractice_daily = d_daily %>% filter(session_type == "match" | session_type == "practice" | session_type == "friendly") %>% distinct(date)
-
 setdiff(dates_matchpractice, dates_matchpractice_daily)
 
 dates = d_jump_all  %>% distinct(date)
@@ -144,20 +161,3 @@ d_daily %>% filter(date == "2017-09-04") %>% View()
 
 d_jump_all %>% select(key_cols)
 d_daily %>% select(key_cols, inj_knee)
-
-# join jump-level data with daily and weekly data
-d_jump = d_jump_all %>% full_join(d_daily, by = key_cols) %>% select(-match_number)
-
-d_jump %>% filter(date == "2017-09-10", id_player == 1, id_team_player == "A-1-1", id_season == "A-1", id_team == "A")
-
-d_jump %>% filter(date == "2017-09-10") %>% select(session_type)
-
-d_jump %>% View()
-
-
-d_jump_all %>% filter(date == "2017-09-04")
-
-
-write_excel_csv(d_jump, 
-                "d_jump.csv", 
-                delim = ";", na = "")
