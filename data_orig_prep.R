@@ -18,7 +18,6 @@ for(i in load_sheets){
   d_original
 }
 
-
 # Team B sometimes added practice but specified match sets
 # this is because they had a practice and match on the same day
 # B was the only Team that registered data at the session-level
@@ -60,7 +59,7 @@ improved_names_bl = c("id_team", "season", "id_player", "id_team_player", "posit
                    "weight", "height", "match_participation")
 
 colnames(d_baseline) = improved_names_bl
-
+d_baseline = d_baseline %>% distinct(id_player, id_team, .keep_all = TRUE)
 d_playerheights = d_baseline %>% select(id_player, height)
 d_original = d_original %>% left_join(d_playerheights, by = "id_player")
 
