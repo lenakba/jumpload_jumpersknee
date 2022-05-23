@@ -46,11 +46,7 @@ d_original = d_original %>% mutate(time_seconds = as.numeric(time_seconds),
 # three days were device test days for Team A, and should not be included in the full data
 d_original = d_original %>% filter(date != "2019-08-04", date != "2019-08-03", date != "2019-08-01")
 
-# write to .csv file
-write_excel_csv(d_original, 
-                "data_per_jump.csv", 
-                delim = ";", na = "")
-
+# obtaining baseline data
 baseline = sheets[!sheets %in% load_sheets]
 d_baseline = read_excel(paste0(data_folder, file_name), sheet = baseline, skip = 2)
 
@@ -63,3 +59,11 @@ improved_names_bl = c("id_team", "season", "id_player", "id_team_player", "posit
                    "weight", "height", "match_participation")
 
 colnames(d_baseline) = improved_names_bl
+
+d_playerheights = d_baseline %>% select(id_player, height)
+d_original = d_original %>% left_join(d_playerheights, by = "id_player")
+
+# write to .csv file
+write_excel_csv(d_original, 
+                "data_per_jump.csv", 
+                delim = ";", na = "")
