@@ -1,6 +1,6 @@
 library(tidyverse)
 library(readxl)
-library(lubridate)
+library(lubridate) # for wrangling dates and datetimes
 
 data_folder = "D:\\phd\\jump load\\data\\"
 d_all = read_excel(paste0(data_folder, "Final Data Set_Daily_Weekly_Pre.xlsx"), "FDS_Daily_Pre_All", na = "", skip = 4)
