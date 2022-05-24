@@ -169,6 +169,7 @@ d_daily = d_all %>% select(all_of(key_cols),
                  age, position,
                  weight,
                  height,
+                 jump_height_max,
                  starts_with("Match"),
                  session_type,
                  t_prevmatch)
@@ -206,35 +207,46 @@ d_unimputed = d_jump_all %>% filter(imputed == "No")
 d_unimputed = 
   d_unimputed %>% mutate(n_jump = 1) %>% 
   group_by(id_player, date) %>% 
-  mutate(jump_daily_n = sum(n_jump),
-         jump_daily_n = ifelse(session_type == "no volleyball", 0, jump_daily_n),
+  mutate(jumps_n = sum(n_jump),
+         jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n),
          jump_height_sum = sum(jump_height, na.rm = TRUE),
          jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)) %>% ungroup()
 
 d_unimputed_daily = d_unimputed %>% 
   distinct(date, id_player, id_team, id_team_player, id_season, session_type, .keep_all = TRUE)
 
-d_unimputed_daily = d_unimputed_daily %>% select(all_of(key_cols), session_type, game_type, jump_daily_n, 
+d_unimputed_daily = d_unimputed_daily %>% 
+  select(all_of(key_cols), session_type, game_type, jumps_n, 
                              jump_height_sum, jump_height_max, 
                              jump_height_max_percent,
                              height_ke_modified, load_index_KE, height_KE_updated)
 
 d_daily = d_daily %>% mutate(id_player = as.character(id_player))
 
+# test - are session types the same?
+# they should be!
+d_unimputed_daily_sessiontypes = d_unimputed_daily %>% 
+                                 select(date, id_player, session_type_raw = session_type) 
+d_daily_sessiontypes = d_daily %>% select(date, id_player, session_type_daily = session_type)
+d_sessiontypes = d_daily_sessiontypes %>% 
+  left_join(d_unimputed_daily_sessiontypes, by = c("date", "id_player")) %>% filter(!is.na(session_type_raw))
+
+testthat::expect_equal(d_sessiontypes$session_type_daily, d_sessiontypes$session_type_raw)
+
 # fixme! 8000 jumps ish that don't have player ID
-# heights and weights calc wrong
+# fixme! session type is not the same between daily data and the raw data
 # join daily unimputed with the daily data
 d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 
 d_daily_jumps = d_daily_jumps %>% 
-  mutate(jump_daily_n = ifelse(session_type == "no volleyball", 0, jump_daily_n)) 
+  mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n)) 
 
 d_daily_jumps = d_daily_jumps %>% arrange(desc(height)) %>% group_by(id_player) %>% fill(height) %>% ungroup()
 d_daily_jumps = d_daily_jumps %>% arrange(desc(weight)) %>% group_by(id_player) %>% fill(weight) %>% ungroup()
 d_daily_jumps = d_daily_jumps %>% arrange(date)
 
 d_daily_jumps %>% 
-  summarise(n_missing_daily = sum(is.na(jump_daily_n)), 
+  summarise(n_missing_daily = sum(is.na(jumps_n)), 
                                   denom = n(), 
                                   prop = n_missing_daily/denom, 
                                   perc = 100*prop)
@@ -252,16 +264,3 @@ setdiff(dates_matchpractice, dates_matchpractice_daily)
 dates = d_jump_all  %>% distinct(date)
 dates_daily = d_daily %>% distinct(date)
 diffdates = setdiff(dates_daily, dates)
-
-d_daily %>% filter(date %in% diffdates$date) %>% count(session_type)
-
-
-
-d_jump_all %>% filter(date == "2018-09-21")
-d_jump_all %>% filter(date == "2018-09-15") %>% View()
-
-d_jump_all %>% filter(date == "2017-09-04") %>% View()
-d_daily %>% filter(date == "2017-09-04") %>% View()
-
-d_jump_all %>% select(key_cols)
-d_daily %>% select(key_cols, inj_knee)
