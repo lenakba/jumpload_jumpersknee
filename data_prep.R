@@ -1,5 +1,6 @@
 library(tidyverse)
 library(readxl)
+library(lubridate)
 
 data_folder = "D:\\phd\\jump load\\data\\"
 d_all = read_excel(paste0(data_folder, "Final Data Set_Daily_Weekly_Pre.xlsx"), "FDS_Daily_Pre_All", na = "", skip = 4)
@@ -44,7 +45,7 @@ d_all_prevmatches = d_all %>%
   group_by(Team, PlayerID) %>% 
   fill(match_index) %>% 
   left_join(d_match_index, by = c("Team", "PlayerID", "match_index")) %>% 
-  group_by(Team, PlayerID) %>% mutate(match_date = lag(match_date))
+  group_by(Team, PlayerID) %>% mutate(match_date = lag(match_date)) %>% ungroup()
 
 # calculate time since previous match
 d_all = d_all_prevmatches %>% 
@@ -114,6 +115,42 @@ d_baseline = read_delim(paste0(data_folder,"d_baseline.csv"), delim = ";", na = 
 
 d_all = d_all %>% left_join(d_baseline %>% select(any_of(key_cols), weight, height), 
                     by = c("id_player", "id_team", "id_team_player", "id_season"))
+
+
+# find which days the OSTRC-questionnaire actually pertains to
+# since each answer is for the previous 6 days including the current day
+d_ostrc_dates = d_all %>% select(date, id_player, inj_knee) %>% filter(!is.na(inj_knee))
+d_ostrc_dates = d_ostrc_dates %>% mutate(date_first = date-6)
+
+nested_list = d_ostrc_dates %>% group_by(id_player) %>% nest()
+nested_list$data = nested_list$data %>% 
+  map(., ~map2(.x = .$date_first, .y = .$date, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
+nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
+d_ostrc_dates_valid = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
+
+d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
+  left_join(d_ostrc_dates, by = c("id_player", "date")) %>% 
+  fill(inj_knee, .direction = "up") %>% select(-date_first) %>% rename(inj_knee_filled = inj_knee)
+
+d_all = d_all %>% left_join(d_ostrc_dates_valid, by = c("id_player", "date"))
+
+# do the same for the other injuries, shoulder and low back pain
+d_all = d_all %>% mutate(inj_other = ifelse(inj_lowback == 1 |  inj_shoulder == 1, 1, 0))
+
+d_ostrc_dates_other = d_all %>% select(date, id_player, inj_other) %>% filter(!is.na(inj_other))
+d_ostrc_dates_other = d_ostrc_dates_other %>% mutate(date_first = date-6)
+
+nested_list = d_ostrc_dates_other %>% group_by(id_player) %>% nest()
+nested_list$data = nested_list$data %>% 
+  map(., ~map2(.x = .$date_first, .y = .$date, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
+nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
+d_ostrc_dates_valid_other = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
+
+d_ostrc_dates_valid_other = d_ostrc_dates_valid_other %>% 
+  left_join(d_ostrc_dates_other, by = c("id_player", "date")) %>% 
+  fill(inj_other, .direction = "up") %>% select(-date_first) %>% rename(inj_other_filled = inj_other)
+
+d_all = d_all %>% left_join(d_ostrc_dates_valid_other, by = c("id_player", "date"))
 
 # write csv to read in other scripts
 # write .csv
