@@ -70,7 +70,7 @@ d_all = d_all %>% rename(date = Date,
                          session_type = SessionType,
                          position = Position)
 
-# write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
+#write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 
 #---------------------------------------------------exposure data
 d_daily = d_all %>% select(key_cols, 
