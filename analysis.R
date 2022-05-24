@@ -6,7 +6,9 @@ data_folder = "D:\\phd\\jump load\\data\\"
 
 d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
-# baseline injuries
+
+# fixme! use mean imputation for the missing weights, for now
+d_all = d_all %>% mutate(weight = ifelse(is.na(weight), mean(weight), weight))
 
 #------------------------------weekly training load sums-------------------
 
@@ -67,7 +69,7 @@ d_weekly_load = unnest(nested_list, cols = c(data)) %>%
   rename(jumps_height_weekly = data)
 
 d_all = d_all %>% mutate(index = 1:n()) %>% left_join(d_weekly_load, by = c("id_player", "index"))
-
+d_all = d_all %>% mutate(preseason = ifelse(season_phase == "Preseason", 1, 0))
 d_analysis = d_all %>% 
              select(key_cols, 
                  jumps_n, 
@@ -78,10 +80,11 @@ d_analysis = d_all %>%
                  TotalDailyKELoadIndex,
                  starts_with("inj"), 
                  year, month_day, season, 
-                 season_phase,
-                 age, position,
-                 Match,
-                 session_type)
+                 preseason,
+                 match = Match, t_prevmatch,
+                 age, position, inj_bl, 
+                 session_type,
+                 weight)
 
 # fill OSTRC questionnaires up so that they pertain for a whole week
 # d_all = d_all %>% 
