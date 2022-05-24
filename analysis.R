@@ -87,7 +87,7 @@ d_analysis = d_all %>%
                  year, month_day, season, 
                  preseason,
                  match = Match, t_prevmatch,
-                 age, position, inj_bl, 
+                 age, position,
                  session_type,
                  weight)
 
