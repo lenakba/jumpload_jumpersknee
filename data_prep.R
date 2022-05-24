@@ -111,8 +111,11 @@ d_daily = d_all %>% select(all_of(key_cols),
                  year, month_day, season, 
                  season_phase, session_type,
                  age, position,
+                 weight,
+                 height,
                  starts_with("Match"),
-                 session_type)
+                 session_type,
+                 t_prevmatch)
 remove(d_all)
 # column specs for jump data
 jump_level_cols = cols(
@@ -158,9 +161,7 @@ d_unimputed_daily = d_unimputed %>%
 d_unimputed_daily = d_unimputed_daily %>% select(all_of(key_cols), session_type, game_type, jump_daily_n, 
                              jump_height_sum, jump_height_max, 
                              jump_height_max_percent,
-                             height_ke_modified, load_index_KE, height_KE_updated,
-                             weight, 
-                             height)
+                             height_ke_modified, load_index_KE, height_KE_updated)
 
 d_daily = d_daily %>% mutate(id_player = as.character(id_player))
 
