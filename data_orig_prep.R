@@ -50,7 +50,7 @@ d_original = d_original %>% filter(date != "2019-08-04", date != "2019-08-03", d
 baseline = sheets[!sheets %in% load_sheets]
 d_baseline = read_excel(paste0(data_folder, file_name), sheet = baseline, skip = 2)
 
-improved_names_bl = c("id_team", "season", "id_player", "id_team_player", "position",
+improved_names_bl = c("id_team", "id_season", "id_player", "id_team_player", "position",
                    "jump_height_max", 
                    "jump_height_max_rank", 
                    "jump_height_max_rank2cat", 
@@ -60,10 +60,15 @@ improved_names_bl = c("id_team", "season", "id_player", "id_team_player", "posit
 
 colnames(d_baseline) = improved_names_bl
 d_baseline = d_baseline %>% distinct(id_player, id_team, .keep_all = TRUE)
+
 d_playerheights = d_baseline %>% select(id_player, height)
 d_original = d_original %>% left_join(d_playerheights, by = "id_player")
 
 # write to .csv file
 write_excel_csv(d_original, 
-                "data_per_jump.csv", 
+                paste0(data_folder, "data_per_jump.csv"), 
+                delim = ";", na = "")
+
+write_excel_csv(d_baseline, 
+                paste0(data_folder, "d_baseline.csv"), 
                 delim = ";", na = "")
