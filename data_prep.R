@@ -54,7 +54,7 @@ d_all = d_all_prevmatches %>%
 # calculate sum of jump heights
 # and how many cm they technically could have jumped
 d_all = d_all %>% mutate(jump_height_sum = jump_height_avg_cm*jumps_n,
-                         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)
+                         jump_height_sum = ifelse(SessionType == "no volleyball", 0, jump_height_sum)
                          )
 
 
@@ -77,7 +77,7 @@ d_bl_injury = d_all %>%
                             inj_knee == 1 ~ 1,
                             inj_lowback == 1 ~ 1,
                             TRUE ~ 0)
-         ) %>% ungroup()
+         ) %>% ungroup() %>% select(Date, Team, TeamSeason, PlayerID, inj_bl)
 
 d_all = d_all %>% left_join(d_bl_injury, by = c("Date", "PlayerID", "Team", "TeamSeason"))
 
