@@ -16,13 +16,40 @@ d_all = d_all %>% mutate(season =
                                     TeamSeason == "A-2" | TeamSeason == "B-2" | TeamSeason == "D-2" ~ "2018/2019",
                                     TeamSeason == "A-3" ~ "2019/2020")) 
 
-
 # fix so "-" means not applicable
 d_all = d_all %>%mutate_if(is.character, ~ifelse(. == "-", "not applicable", .))
 
 # add match variable and fix missing session-types
-d_all = d_all %>%mutate(Match = as.character(ifelse(SessionType == "match", 1, 0)))
-d_all = d_all %>%mutate(SessionType = ifelse(is.na(SessionType), "no volleyball", SessionType))
+d_all = d_all %>% mutate(SessionType = ifelse(is.na(SessionType), "no volleyball", SessionType))
+d_all = d_all %>% mutate(Match = as.character(ifelse(SessionType == "match", 1, 0)))
+# calculate number of days since previous match
+d_match = d_all %>% select(Date, PlayerID , Team, Match)
+
+# find match dates
+d_match_index = d_match %>% 
+  filter(Match == 1) %>% 
+  group_by(Team, PlayerID) %>% 
+  mutate(match_index = 1:n()) %>% 
+  select(-Match) %>% 
+  ungroup() %>% rename(match_date = Date)
+
+# join with the match index data to find
+# the match considered the "previous" match
+# note that if the current day is a match, we will still calculate
+# days from the previous match
+# also, the first match is NA, and all days before the first match is NA
+# because we don't know how long they went without a match in the very first match in the season
+d_all_prevmatches = d_all %>% 
+  left_join(d_match_index, by = c("Team", "PlayerID", "Date" = "match_date")) %>% 
+  group_by(Team, PlayerID) %>% 
+  fill(match_index) %>% 
+  left_join(d_match_index, by = c("Team", "PlayerID", "match_index")) %>% 
+  group_by(Team, PlayerID) %>% mutate(match_date = lag(match_date))
+
+# calculate time since previous match
+d_all = d_all_prevmatches %>% 
+  mutate(t_prevmatch = as.numeric(difftime(Date, match_date, "days"))) %>% 
+  select(-match_date, -match_index)
 
 # calculate sum of jump heights
 d_all = d_all %>%mutate(jump_height_sum = jump_height_avg_cm*jumps_n)
@@ -34,12 +61,6 @@ d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 
                          inj_shoulder_subst = ifelse(Shoulder_2 >= 17 | Shoulder_3 >= 17, 1, 0),
                          inj_lowback = ifelse(LowBack_1 >= 1| LowBack_2 >= 1 | LowBack_3 >= 1 | LowBack_4 >= 1, 1, 0),
                          inj_lowback_subst = ifelse(LowBack_2 >= 17 | LowBack_3 >= 17, 1, 0))
-
-# write csv to read in other scripts
-# write .csv
-# write_delim is preferable, but write_excel_csv is required for excel to understand
-# that the file encoding is UTF-8
-
 
 # checking that no jump height sums are unrealistically extreme
 d_jump_height_test = d_all %>% select(Date, PlayerID, jumps_n, jump_height_sum) %>% 
@@ -75,7 +96,11 @@ d_baseline = read_delim(paste0(data_folder,"d_baseline.csv"), delim = ";", na = 
 d_all = d_all %>% left_join(d_baseline %>% select(any_of(key_cols), weight, height), 
                     by = c("id_player", "id_team", "id_team_player", "id_season"))
 
-#write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
+# write csv to read in other scripts
+# write .csv
+# write_delim is preferable, but write_excel_csv is required for excel to understand
+# that the file encoding is UTF-8
+# write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 
 #---------------------------------------------------exposure data
 d_daily = d_all %>% select(all_of(key_cols), 
