@@ -235,6 +235,7 @@ testthat::expect_equal(d_sessiontypes$session_type_daily, d_sessiontypes$session
 
 # fixme! 8000 jumps ish that don't have player ID
 # fixme! session type is not the same between daily data and the raw data
+d_unimputed_daily = d_unimputed_daily %>% rename(session_type_raw = session_type)
 # join daily unimputed with the daily data
 d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 
@@ -250,7 +251,6 @@ d_daily_jumps %>%
                                   denom = n(), 
                                   prop = n_missing_daily/denom, 
                                   perc = 100*prop)
-
 
 write_excel_csv(d_daily_jumps, 
                 "d_jump_daily.csv", 
