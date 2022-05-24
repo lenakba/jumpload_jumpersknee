@@ -2,6 +2,11 @@ library(tidyverse) # data wrangling
 library(dlnm) # distributed lag non-linear models
 library(slider) # for iterative calulcations
 
+# so we don't have to deal with scientific notations
+# and strings aren't automatically read as factors:
+options(scipen = 30, 
+        stringsAsFactors = FALSE)
+
 data_folder = "D:\\phd\\jump load\\data\\"
 
 d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
@@ -90,14 +95,6 @@ d_analysis = d_all %>%
                  age, position,
                  session_type,
                  weight)
-
-# fill OSTRC questionnaires up so that they pertain for a whole week
-# d_all = d_all %>% 
-#   fill(starts_with("knee"), 
-#        starts_with("Shoulder"), 
-#        starts_with("LowBack"), 
-#        .direction = "up")
-
 
 library(icenReg)
 data(miceData)
