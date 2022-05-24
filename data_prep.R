@@ -59,7 +59,7 @@ d_all %>% count(SessionType)
 d_all %>% count(`Season Phase`)
 d_all %>% count(MatchParticipation) 
 
-key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season", "session_type")
+key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 
 d_all = d_all %>% rename(date = Date, 
                          id_team = Team, 
@@ -70,16 +70,21 @@ d_all = d_all %>% rename(date = Date,
                          session_type = SessionType,
                          position = Position)
 
+d_baseline = read_delim(paste0(data_folder,"d_baseline.csv"), delim = ";", na = "")
+
+d_all = d_all %>% left_join(d_baseline %>% select(any_of(key_cols), weight, height), 
+                    by = c("id_player", "id_team", "id_team_player", "id_season"))
+
 #write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 
 #---------------------------------------------------exposure data
-d_daily = d_all %>% select(key_cols, 
+d_daily = d_all %>% select(all_of(key_cols), 
                  starts_with("Knee"), 
                  starts_with("Shoulder"), 
                  starts_with("LowBack"), 
                  starts_with("inj"), 
                  year, month_day, season, 
-                 season_phase,
+                 season_phase, session_type,
                  age, position,
                  starts_with("Match"),
                  session_type)
@@ -125,7 +130,7 @@ d_unimputed =
 d_unimputed_daily = d_unimputed %>% 
   distinct(date, id_player, id_team, id_team_player, id_season, session_type, .keep_all = TRUE)
 
-d_unimputed_daily = d_unimputed_daily %>% select(key_cols, game_type, jump_daily_n, 
+d_unimputed_daily = d_unimputed_daily %>% select(all_of(key_cols), session_type, game_type, jump_daily_n, 
                              jump_height_sum, jump_height_max, 
                              jump_height_max_percent,
                              height_ke_modified, load_index_KE, height_KE_updated,
