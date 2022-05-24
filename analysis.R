@@ -8,7 +8,10 @@ d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = ""
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 
 # fixme! use mean imputation for the missing weights, for now
-d_all = d_all %>% mutate(weight = ifelse(is.na(weight), mean(weight), weight))
+mean_weight = d_all %>% distinct(id_player, .keep_all = TRUE) %>% 
+  summarise(m_weight = mean(weight, na.rm = TRUE)) %>% pull(m_weight)
+
+d_all = d_all %>% mutate(weight = ifelse(is.na(weight), mean_weight, weight))
 
 #------------------------------weekly training load sums-------------------
 
