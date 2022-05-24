@@ -52,7 +52,11 @@ d_all = d_all_prevmatches %>%
   select(-match_date, -match_index)
 
 # calculate sum of jump heights
-d_all = d_all %>%mutate(jump_height_sum = jump_height_avg_cm*jumps_n)
+# and how many cm they technically could have jumped
+d_all = d_all %>% mutate(jump_height_sum = jump_height_avg_cm*jumps_n,
+                         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)
+                         )
+
 
 # add complaint yes/no variables
 d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 1 | Knee_4 >= 1, 1, 0),
@@ -61,6 +65,21 @@ d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 
                          inj_shoulder_subst = ifelse(Shoulder_2 >= 17 | Shoulder_3 >= 17, 1, 0),
                          inj_lowback = ifelse(LowBack_1 >= 1| LowBack_2 >= 1 | LowBack_3 >= 1 | LowBack_4 >= 1, 1, 0),
                          inj_lowback_subst = ifelse(LowBack_2 >= 17 | LowBack_3 >= 17, 1, 0))
+
+# baseline injuries
+# add column for baseline injury
+d_bl_injury = d_all %>% 
+  group_by(PlayerID) %>% 
+  slice(1) %>% 
+  select(Date, Team, TeamSeason, PlayerID, 
+         inj_knee, inj_shoulder, inj_lowback) %>% 
+  mutate(inj_bl = case_when(inj_shoulder == 1 ~ 1,
+                            inj_knee == 1 ~ 1,
+                            inj_lowback == 1 ~ 1,
+                            TRUE ~ 0)
+         ) %>% ungroup()
+
+d_all = d_all %>% left_join(d_bl_injury, by = c("Date", "PlayerID", "Team", "TeamSeason"))
 
 # checking that no jump height sums are unrealistically extreme
 d_jump_height_test = d_all %>% select(Date, PlayerID, jumps_n, jump_height_sum) %>% 
