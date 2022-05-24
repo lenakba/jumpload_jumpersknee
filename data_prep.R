@@ -217,7 +217,7 @@ d_unimputed_daily = d_unimputed %>%
 
 d_unimputed_daily = d_unimputed_daily %>% 
   select(all_of(key_cols), session_type, game_type, jumps_n, 
-                             jump_height_sum, jump_height_max, 
+                             jump_height_sum,
                              jump_height_max_percent,
                              height_ke_modified, load_index_KE, height_KE_updated)
 
@@ -253,7 +253,7 @@ d_daily_jumps %>%
                                   perc = 100*prop)
 
 write_excel_csv(d_daily_jumps, 
-                "d_jump_daily.csv", 
+                paste0(data_folder, "d_jump_daily.csv"), 
                 delim = ";", na = "")
 
 # checking missing dates
