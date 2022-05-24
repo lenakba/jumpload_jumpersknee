@@ -1,6 +1,6 @@
-library(tidyverse)
-library(dlnm)
-library(slider)
+library(tidyverse) # data wrangling
+library(dlnm) # distributed lag non-linear models
+library(slider) # for iterative calulcations
 
 data_folder = "D:\\phd\\jump load\\data\\"
 
@@ -71,10 +71,12 @@ d_weekly_load = unnest(nested_list, cols = c(data)) %>%
   ungroup() %>% mutate(index = 1:n()) %>% 
   rename(jumps_height_weekly = data)
 
+
+# select columns which will be used in analyses
 d_all = d_all %>% mutate(index = 1:n()) %>% left_join(d_weekly_load, by = c("id_player", "index"))
 d_all = d_all %>% mutate(preseason = ifelse(season_phase == "Preseason", 1, 0))
 d_analysis = d_all %>% 
-             select(key_cols, 
+             select(all_of(key_cols), 
                  jumps_n, 
                  jumps_n_weekly,
                  jump_height_sum,
