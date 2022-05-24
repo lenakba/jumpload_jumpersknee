@@ -39,7 +39,7 @@ d_all = d_all %>% mutate(inj_knee = ifelse(Knee_1 >= 1| Knee_2 >= 1 | Knee_3 >= 
 # write .csv
 # write_delim is preferable, but write_excel_csv is required for excel to understand
 # that the file encoding is UTF-8
-# write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
+
 
 # checking that no jump height sums are unrealistically extreme
 d_jump_height_test = d_all %>% select(Date, PlayerID, jumps_n, jump_height_sum) %>% 
@@ -61,7 +61,6 @@ d_all %>% count(MatchParticipation)
 
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season", "session_type")
 
-#---------------------------------------------------exposure data
 d_all = d_all %>% rename(date = Date, 
                          id_team = Team, 
                          season_phase = `Season Phase`,
@@ -71,6 +70,9 @@ d_all = d_all %>% rename(date = Date,
                          session_type = SessionType,
                          position = Position)
 
+# write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
+
+#---------------------------------------------------exposure data
 d_daily = d_all %>% select(key_cols, 
                  starts_with("Knee"), 
                  starts_with("Shoulder"), 
