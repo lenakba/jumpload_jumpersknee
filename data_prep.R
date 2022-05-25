@@ -117,39 +117,46 @@ d_baseline = read_delim(paste0(data_folder,"d_baseline.csv"), delim = ";", na = 
 d_all = d_all %>% left_join(d_baseline %>% select(any_of(key_cols), weight, height), 
                     by = c("id_player", "id_team", "id_team_player", "id_season"))
 
-
 # find which days the OSTRC-questionnaire actually pertains to
 # since each answer is for the previous 6 days including the current day
-d_ostrc_dates = d_all %>% select(date, id_player, inj_knee) %>% filter(!is.na(inj_knee))
-d_ostrc_dates = d_ostrc_dates %>% mutate(date_first = date-6)
+d_ostrc_dates = d_all %>% select(all_of(key_cols), inj_knee) %>% filter(!is.na(inj_knee))
+d_ostrc_dates = d_ostrc_dates %>% mutate(date_last = date+6)
 
-nested_list = d_ostrc_dates %>% group_by(id_player) %>% nest()
+nested_list = d_ostrc_dates %>% group_by(id_player, id_team, id_team_player, id_season) %>% nest()
 nested_list$data = nested_list$data %>% 
-  map(., ~map2(.x = .$date_first, .y = .$date, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
+  map(., ~map2(.x = .$date, .y = .$date_last, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
 nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
 d_ostrc_dates_valid = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
 
+# remove duplicated dates
+# as some OSTRC intervals overlapped
 d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
-  left_join(d_ostrc_dates, by = c("id_player", "date")) %>% 
-  fill(inj_knee, .direction = "down") %>% select(-date_first) %>% rename(inj_knee_filled = inj_knee)
+  distinct(id_player, id_team, id_team_player, id_season, date)
 
-d_all = d_all %>% left_join(d_ostrc_dates_valid, by = c("id_player", "date"))
+d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
+  left_join(d_ostrc_dates, by = c("id_player", "id_team", "id_team_player", "id_season", "date")) %>% 
+  fill(inj_knee, .direction = "down") %>% select(-date_last) %>% rename(inj_knee_filled = inj_knee)
+
+d_all = d_all %>% left_join(d_ostrc_dates_valid, 
+                            by = c("id_player", "id_team", "id_team_player", "id_season", "date"))
 
 # do the same for the other injuries, shoulder and low back pain
 d_all = d_all %>% mutate(inj_other = ifelse(inj_lowback == 1 |  inj_shoulder == 1, 1, 0))
+d_ostrc_dates_other = d_all %>% select(all_of(key_cols), inj_other) %>% filter(!is.na(inj_other))
+d_ostrc_dates_other = d_ostrc_dates_other %>% mutate(date_last = date+6)
 
-d_ostrc_dates_other = d_all %>% select(date, id_player, inj_other) %>% filter(!is.na(inj_other))
-d_ostrc_dates_other = d_ostrc_dates_other %>% mutate(date_first = date-6)
-
-nested_list = d_ostrc_dates_other %>% group_by(id_player) %>% nest()
+nested_list = d_ostrc_dates_other %>% group_by(id_player, id_team, id_team_player, id_season) %>% nest()
 nested_list$data = nested_list$data %>% 
-  map(., ~map2(.x = .$date_first, .y = .$date, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
+  map(., ~map2(.x = .$date, .y = .$date_last, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
 nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
 d_ostrc_dates_valid_other = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
 
 d_ostrc_dates_valid_other = d_ostrc_dates_valid_other %>% 
+  distinct(id_player, id_team, id_team_player, id_season, date)
+
+d_ostrc_dates_valid_other = d_ostrc_dates_valid_other %>% 
   left_join(d_ostrc_dates_other, by = c("id_player", "date")) %>% 
-  fill(inj_other, .direction = "down") %>% select(-date_first) %>% rename(inj_other_filled = inj_other)
+  fill(inj_other, .direction = "down") %>% select(-date_last) %>% rename(inj_other_filled = inj_other)
 
 d_all = d_all %>% left_join(d_ostrc_dates_valid_other, by = c("id_player", "date"))
 
@@ -196,16 +203,8 @@ jump_level_cols = cols(
 )
 
 d_jump_all = read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na = "", col_types = jump_level_cols)
-#d_jump_all = d_jump_all %>% mutate(imputed = ifelse(is.na(imputed), "No", imputed))
-#d_jump_all = d_jump_all %>% mutate(jump_height = ifelse(imputed == "Yes", NA, jump_height))
 
-# how many missing jump heights?
-d_jump_all %>% summarise(n_m_height = sum(imputed == "Yes"),
-                         denom = n(),
-                         prop = n_m_height/denom,
-                         perc = 100*prop)
-
-# how about missing daily jumps?
+# how many missing daily jumps?
 d_unimputed = d_jump_all %>% filter(imputed == "No") 
 
 d_unimputed = 
@@ -243,6 +242,16 @@ d_unimputed_daily = d_unimputed_daily %>% rename(session_type_raw = session_type
 # join daily unimputed with the daily data
 d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 
+d_unimputed_keys = d_unimputed_daily %>% distinct(date, id_player, id_team, id_team_player, id_season)
+d_daily_keys = d_daily %>% distinct(date, id_player, id_team, id_team_player, id_season)
+d_daily_joined_keys = d_daily_jumps %>% distinct(date, id_player, id_team, id_team_player, id_season)
+
+setdiff(d_unimputed_keys, d_daily_keys)
+setdiff(d_daily_keys, d_unimputed_keys)
+
+setdiff(d_daily_joined_keys, d_daily_keys)
+
+
 d_daily_jumps = d_daily_jumps %>% 
   mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n)) 
 
@@ -259,9 +268,9 @@ d_daily_jumps %>%
 # checking missing dates
 dates_matchpractice = d_jump_all %>% filter(session_type == "match" | session_type == "practice" | session_type == "friendly") %>% distinct(date)
 dates_matchpractice_daily = d_daily %>% filter(session_type == "match" | session_type == "practice" | session_type == "friendly") %>% distinct(date)
-setdiff(dates_matchpractice, dates_matchpractice_daily)
+setdiff(dates_matchpractice_daily, dates_matchpractice)
 
-dates = d_jump_all  %>% distinct(date)
+dates = d_jump_all %>% distinct(date)
 dates_daily = d_daily %>% distinct(date)
 diffdates = setdiff(dates_daily, dates)
 
