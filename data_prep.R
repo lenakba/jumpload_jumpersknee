@@ -251,11 +251,23 @@ setdiff(d_daily_keys, d_unimputed_keys)
 
 setdiff(d_daily_joined_keys, d_daily_keys)
 
-
+# We assume 0 jumping on non-volleyball days
 d_daily_jumps = d_daily_jumps %>% 
   mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n)) 
 
-d_daily_jumps %>% 
+# Team B had no exposure registration for 4-11th of September 2017 (registration started 12th September), 
+# but they have injury data. These days should not be considered 
+# because we don't know what kind of activity plays had on these days
+pos_dates = which((d_daily_jumps$date %in% seq(ymd("2017-09-04"), ymd("2017-09-11"), by = "day")) & 
+                    d_daily_jumps$id_team == "B")
+d_daily_jumps = d_daily_jumps %>% 
+                mutate(index = 1:n(), 
+                       jumps_n = ifelse(index %in% pos_dates, NA, jumps_n)) %>% 
+                select(-index)
+
+# These days should not be included in the
+# denominator when calculating the missing days, either
+d_daily_jumps %>% slice(-pos_dates) %>% 
   summarise(n_missing_daily = sum(is.na(jumps_n)), 
                                   denom = n(), 
                                   prop = n_missing_daily/denom, 
