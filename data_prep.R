@@ -1,6 +1,7 @@
 library(tidyverse)
 library(readxl)
 library(lubridate) # for wrangling dates and datetimes
+library(slider) # iterative calculations across a window
 
 data_folder = "D:\\phd\\jump load\\data\\"
 d_all = read_excel(paste0(data_folder, "Final Data Set_Daily_Weekly_Pre.xlsx"), "FDS_Daily_Pre_All", na = "", skip = 4)
@@ -130,7 +131,7 @@ d_ostrc_dates_valid = unnest(nested_list, cols = data) %>% ungroup() %>% rename(
 
 d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
   left_join(d_ostrc_dates, by = c("id_player", "date")) %>% 
-  fill(inj_knee, .direction = "up") %>% select(-date_first) %>% rename(inj_knee_filled = inj_knee)
+  fill(inj_knee, .direction = "down") %>% select(-date_first) %>% rename(inj_knee_filled = inj_knee)
 
 d_all = d_all %>% left_join(d_ostrc_dates_valid, by = c("id_player", "date"))
 
@@ -148,9 +149,12 @@ d_ostrc_dates_valid_other = unnest(nested_list, cols = data) %>% ungroup() %>% r
 
 d_ostrc_dates_valid_other = d_ostrc_dates_valid_other %>% 
   left_join(d_ostrc_dates_other, by = c("id_player", "date")) %>% 
-  fill(inj_other, .direction = "up") %>% select(-date_first) %>% rename(inj_other_filled = inj_other)
+  fill(inj_other, .direction = "down") %>% select(-date_first) %>% rename(inj_other_filled = inj_other)
 
 d_all = d_all %>% left_join(d_ostrc_dates_valid_other, by = c("id_player", "date"))
+
+# add preseason variable
+d_all = d_all %>% mutate(preseason = ifelse(season_phase == "Preseason", 1, 0))
 
 # write csv to read in other scripts
 # write .csv
@@ -165,7 +169,7 @@ d_daily = d_all %>% select(all_of(key_cols),
                  starts_with("LowBack"), 
                  starts_with("inj"), 
                  year, month_day, season, 
-                 season_phase, session_type,
+                 preseason, session_type,
                  age, position,
                  weight,
                  height,
@@ -242,19 +246,15 @@ d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 d_daily_jumps = d_daily_jumps %>% 
   mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n)) 
 
-d_daily_jumps = d_daily_jumps %>% arrange(desc(height)) %>% group_by(id_player) %>% fill(height) %>% ungroup()
-d_daily_jumps = d_daily_jumps %>% arrange(desc(weight)) %>% group_by(id_player) %>% fill(weight) %>% ungroup()
-d_daily_jumps = d_daily_jumps %>% arrange(date)
-
 d_daily_jumps %>% 
   summarise(n_missing_daily = sum(is.na(jumps_n)), 
                                   denom = n(), 
                                   prop = n_missing_daily/denom, 
                                   perc = 100*prop)
 
-write_excel_csv(d_daily_jumps, 
-                paste0(data_folder, "d_jump_daily.csv"), 
-                delim = ";", na = "")
+# write_excel_csv(d_daily_jumps, 
+#                 paste0(data_folder, "d_jump_daily.csv"), 
+#                 delim = ";", na = "")
 
 # checking missing dates
 dates_matchpractice = d_jump_all %>% filter(session_type == "match" | session_type == "practice" | session_type == "friendly") %>% distinct(date)
@@ -264,3 +264,77 @@ setdiff(dates_matchpractice, dates_matchpractice_daily)
 dates = d_jump_all  %>% distinct(date)
 dates_daily = d_daily %>% distinct(date)
 diffdates = setdiff(dates_daily, dates)
+
+#-------------------------------multiple imputation
+
+# Performing multiple imputation
+# note that the data are likely MAR
+# with more missing in the earlier years than in later years
+# need the correct variable types
+d_pre_impute = d_pre_impute %>% mutate_at(vars(starts_with("Knee"), starts_with("Shoulder"), 
+                                 starts_with("LowBack"), starts_with("inj")), ~as.character(.))
+
+# Year is not to be included in the multiple imputation
+# (one of the pitfalls of multiple imputation is to inlcude MAR-causing variables)
+# specify in imputation model
+
+
+
+#-------------------------------------calculate weekly jump load
+# function to calculate sums across a user-specified window size
+slide_sum = function(x, window_size){
+  l = slide(x, ~sum(.), .before = 6, step = window_size, .complete = FALSE)
+  vector = unlist(l)
+  v_calc = vector[seq(1, length(vector), window_size)]
+  v_calc
+}
+
+# make window object to designated length (7 days)
+window_7 = 7
+
+# First step is to test that our automated function 
+# for calculating weekly sums (slide_sum) calculates correctly. 
+example_player = d_daily_jumps %>% filter(id_player == 1) %>% select(date, jumps_n, id_player, inj_knee)
+
+# manual calculation of first 3 weekly sums
+v_correct = c(
+  example_player %>% slice(1:7) %>% summarize(the_sum = sum(jumps_n)) %>% pull(the_sum),
+  example_player %>% slice(8:14) %>% summarize(the_sum = sum(jumps_n)) %>% pull(the_sum),
+  example_player %>% slice(15:21) %>% summarize(the_sum = sum(jumps_n)) %>% pull(the_sum)
+)
+
+# function above used to calculate weekly sums
+test_loads = (example_player %>% pull(jumps_n))[1:(window_7*3)]
+v_calc = slide_sum(test_loads, window_7)
+
+# test that the output from the function equals the manual calculation
+testthat::expect_equal(v_correct, v_calc)
+
+# Next step is to perform the calculation on the data
+# We nest on each player in the data so that weekly sum-calculation
+# does not slide over different players
+window = 1
+nested_list = d_daily_jumps %>% group_by(id_player) %>% nest()
+nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jumps_n, window))
+d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
+  ungroup() %>% mutate(index = 1:n()) %>% 
+  rename(jumps_n_weekly = data)
+
+d_daily_jumps_joined = d_daily_jumps %>% mutate(index = 1:n()) %>% left_join(d_weekly_load, by = c("id_player", "index"))
+
+# repeat for jump height
+nested_list = d_daily_jumps %>% group_by(id_player) %>% nest()
+nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jump_height_sum, window))
+d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
+  ungroup() %>% mutate(index = 1:n()) %>% 
+  rename(jumps_height_weekly = data)
+d_daily_jumps_joined2 = d_daily_jumps_joined %>% mutate(index = 1:n()) %>% left_join(d_weekly_load, by = c("id_player", "index"))
+
+# remove the first 6 rows per person for the weekly jump heights and jump frequencies
+d_pre_impute = d_daily_jumps_joined2 %>% 
+  group_by(id_player) %>% 
+  mutate(index = 1:n(),
+         jumps_n_weekly = ifelse(index %in% 1:6, NA, jumps_n_weekly),
+         jumps_height_weekly = ifelse(index %in% 1:6, NA, jumps_height_weekly)
+  ) %>% ungroup()
+
