@@ -2,7 +2,7 @@ library(tidyverse)
 library(readxl)
 
 data_folder = "D:\\phd\\jump load\\data\\"
-file_name = "Raw Jump Data Imputationfix.xlsx"
+file_name = "Raw Jump Data.xlsx"
 sheets = excel_sheets(paste0(data_folder, file_name))
 
 # read all sheets in file
