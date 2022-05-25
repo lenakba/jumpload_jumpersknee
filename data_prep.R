@@ -257,7 +257,9 @@ d_daily_jumps = d_daily_jumps %>%
 
 # Team B had no exposure registration for 4-11th of September 2017 (registration started 12th September), 
 # but they have injury data. These days should not be considered 
-# because we don't know what kind of activity plays had on these days
+# because we don't know what kind of activity plays had on these days.
+# The ionly reason we have the injury data is because the OSTRC
+# asks about injuries "the last 7 days".
 pos_dates = which((d_daily_jumps$date %in% seq(ymd("2017-09-04"), ymd("2017-09-11"), by = "day")) & 
                     d_daily_jumps$id_team == "B")
 d_daily_jumps = d_daily_jumps %>% 
