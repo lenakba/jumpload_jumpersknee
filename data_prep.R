@@ -236,20 +236,12 @@ d_sessiontypes = d_daily_sessiontypes %>%
 
 testthat::expect_equal(d_sessiontypes$session_type_daily, d_sessiontypes$session_type_raw)
 
-# fixme! 8000 jumps ish that don't have player ID
-# fixme! session type is not the same between daily data and the raw data
+# session type is not the same between daily data and the raw data
+# the daily data is more secure
+# however, match should be found from "Match #" variable, not session type
 d_unimputed_daily = d_unimputed_daily %>% rename(session_type_raw = session_type)
 # join daily unimputed with the daily data
 d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
-
-d_unimputed_keys = d_unimputed_daily %>% distinct(date, id_player, id_team, id_team_player, id_season)
-d_daily_keys = d_daily %>% distinct(date, id_player, id_team, id_team_player, id_season)
-d_daily_joined_keys = d_daily_jumps %>% distinct(date, id_player, id_team, id_team_player, id_season)
-
-setdiff(d_unimputed_keys, d_daily_keys)
-setdiff(d_daily_keys, d_unimputed_keys)
-
-setdiff(d_daily_joined_keys, d_daily_keys)
 
 # We assume 0 jumping on non-volleyball days
 d_daily_jumps = d_daily_jumps %>% 
