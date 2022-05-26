@@ -26,11 +26,8 @@ key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 # we will set at 6 weeks initially to explore the effect of time
 # since injury is interval-censored, the first week cannot be included in the DLNM
 # note that "0" is current day, and so 7 is the first day after the first 7 days.
-lag_min = 7
-lag_max = 41
-
-# or consider first day of OSTRC week to be day of injury?
 lag_min = 0
+lag_max = 27
 
 # select columns that may be useful in analyses
 d_analysis = d_jumpload %>% 
@@ -85,7 +82,7 @@ counting_process_form = function(d_survival_sim){
   # for each of the exit times above, with the information of whether or not they were injured at that time
   # meaning we will have the same time intervals per participant
   d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id)
-  d_counting_process %>% select(-Start, -Fup)
+  d_counting_process %>% select(-Start, -Fup) %>% tibble() 
 }
 
 # function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
@@ -103,7 +100,7 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
 
 # temporary select to reduce the amount of memory during computation
 d_selected = d_analysis %>% select(d_imp, id_player, date, jumps_n, inj_knee_filled, day, Fup)
-
+remove(d_analysis)
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
                               rename(Stop = day, Id = id_player, Event = inj_knee_filled) %>% 
@@ -112,6 +109,38 @@ d_surv = d_selected %>% group_by(d_imp, id_player) %>%
 
 l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
 
+
+d_follow_up_times = l_surv[[1]] %>% distinct(Id, Fup, .keep_all = TRUE)
+d_surv_lim = map2(.x = d_follow_up_times$Id,
+                  .y = d_follow_up_times$Fup,
+                  ~l_surv[[1]] %>% filter(Id == .x) %>% slice(.y)) %>% 
+  bind_rows() %>% rename(event = Event, exit = Stop, id = Id)
+
+# extracting timepoints in which an event happened
+ftime = d_surv_lim %>% filter(event == 1) %>% distinct(exit) %>% arrange(exit) %>% pull()
+
+l_surv[[1]] %>% filter(Event == 0)
+
+# arrange the survival data so that, for each individual, we have an interval of enter and exit times
+# for each of the exit times above, with the information of whether or not they were injured at that time
+# meaning we will have the same time intervals per participant
+d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id, date)
+
+d_surv_lim %>% select(id, date, Start, exit, Fup, event)
+d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
+  mutate(index_start = seq(1, length(Start)))
+
+d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
+  mutate(index_start = seq(from = Start[1], 
+                           to = Start[1]+(length(Start)-1))) %>% ungroup() %>% 
+  select(-date, -jumps_n, -Fup, -Start) %>% 
+  left_join(l_surv[[1]] %>% select(id = Id, date, Start), by = c("id", "index_start" = "Start"))
+
+
+l_surv[[1]] %>% filter(Id == 1) %>% nrow()
+d_counting_process %>% tibble() %>% select(-Start, -Fup) %>% filter(id == 1) %>% nrow()
+
+d_counting_process %>% select(-Start, -Fup) %>% filter(id == 1) %>% View()
 # rearrange to counting process form
 #d_surv_cpform = d_surv %>% group_by(d_imp) %>% counting_process_form(.) %>% mutate(id = as.numeric(id)) %>% ungroup()
 l_surv_cpform =  l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
@@ -136,9 +165,6 @@ l_surv_cpform = l_surv_cpform %>% map(.  %>%
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
                                         argvar = list(fun="ns", knots = 3),
                                         arglag = list(fun="ns", knots = 3)))
-
-qplot(data = l_surv_cpform[[1]], x=exit , y = event , facets= event~id)
-
 # fit DLNM
 l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
