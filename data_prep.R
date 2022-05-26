@@ -79,9 +79,10 @@ d_bl_injury = d_all %>%
                             inj_knee == 1 ~ 1,
                             inj_lowback == 1 ~ 1,
                             TRUE ~ 0)
-         ) %>% ungroup() %>% select(Date, Team, TeamSeason, PlayerID, inj_bl)
+         ) %>% ungroup() %>% select(PlayerID, inj_bl)
 
-d_all = d_all %>% left_join(d_bl_injury, by = c("Date", "PlayerID", "Team", "TeamSeason"))
+d_all = d_all %>% 
+  left_join(d_bl_injury, by = "PlayerID")
 
 # checking that no jump height sums are unrealistically extreme
 d_jump_height_test = d_all %>% select(Date, PlayerID, jumps_n, jump_height_sum) %>% 
@@ -185,7 +186,9 @@ d_daily = d_all %>% select(all_of(key_cols),
                  session_type,
                  t_prevmatch, 
                  -Match_Opponent, 
-                 -Match_Type)
+                 -Match_Type,
+                 -Match_dateofnext, 
+                 -MatchRelatedDay)
 remove(d_all)
 # column specs for jump data
 jump_level_cols = cols(
@@ -247,7 +250,9 @@ d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 
 # We assume 0 jumping on non-volleyball days
 d_daily_jumps = d_daily_jumps %>% 
-  mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n)) 
+  mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n),
+         jump_height_max_percent = ifelse(session_type == "no volleyball", 0, jump_height_max_percent),
+         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)) 
 
 # Team B had no exposure registration for 4-11th of September 2017 (registration started 12th September), 
 # but they have injury data. These days should not be considered 
@@ -287,23 +292,48 @@ diffdates = setdiff(dates_daily, dates)
 # Performing multiple imputation
 # note that the data are likely MAR
 # with more missing in the earlier years than in later years
+# however, season/year is assumed not to effect the amount 
+# of jumping outside the specific factors of that season/year
+# and so we can treat this as MCAR.
 # need the correct variable types
 d_pre_impute = d_daily_jumps %>% mutate_at(vars(starts_with("Knee"), starts_with("Shoulder"), 
                                  starts_with("LowBack"), starts_with("inj")), ~as.character(.))
 
-# Year is not to be included in the multiple imputation
-# (one of the pitfalls of multiple imputation is to inlcude MAR-causing variables)
-# specify in imputation model
+# will include variables that are 
+# good predictors of jump load variables
+# in the imputation model
+# will remove variables that are derived from other variables (i.e. non-filled injury data)
+# and likely to have 0.97+ correlation
+no_imputation_vars = names(
+d_pre_impute %>% select(session_type_raw,
+                        height_KE_updated,
+                        height_ke_modified,
+                        jump_height_max_percent,
+                        month_day, 
+                        starts_with("Knee"),
+                        starts_with("Shoulder"),
+                        starts_with("LowBack"),
+                        ends_with("subst"),
+                        inj_other,
+                        inj_knee, inj_shoulder, inj_lowback)
+)
+
+# we extract these columns so we may join them on the imputed data later
+d_outvars = d_pre_impute %>% select(all_of(key_cols), all_of(no_imputation_vars))
+
+# remove the vars from the imputation data
+d_pre_impute = d_pre_impute %>% select(-all_of(no_imputation_vars))
+
+# specify the imputation model
+# we want to include injury data as a predictor
+# but we don't want it to be imputed
 library(mice)
-l_mult_imputed = d_pre_impute %>%
-  mice(seed = 1234, print = FALSE)
-
-l_mult_imputed[[1]]
-
-
 method_impute = make.method(d_pre_impute)
-method_impute["injury"] = ""
-mids.pmm.noinjury = mice(d_pre_impute, method = method_impute, print = FALSE, seed = 1234)
+method_impute["inj_knee_filled"] = ""
+method_impute["inj_other_filled"] = ""
+
+
+l_mids_jumpload = mice(d_pre_impute, method = method_impute, print = FALSE, seed = 1234)
 
 
 
