@@ -332,11 +332,42 @@ method_impute = make.method(d_pre_impute)
 method_impute["inj_knee_filled"] = ""
 method_impute["inj_other_filled"] = ""
 
+# specify which variables we need imputed
+imputevars = c("jumps_n", "weight", "jump_height_sum")
+meth = make.method(d_pre_impute)
+meth[1:length(meth)] = ""
+
+# the 2l.pan assumes a multilevel model 
+# see https://stefvanbuuren.name/fimd/sec-multioutcome.html#sec:multioutcome 
+meth[imputevars] = "2l.pan"
+
+# specify the predictor matrix
+pred = make.predictorMatrix(d_pre_impute)
+pred[1:nrow(pred), 1:ncol(pred)] = 0
+# define player id as the class variable for our multilevel imputation model
+pred[imputevars, "id_player"] = (-2)
+
+# define fixed effects in the model
+fixed_effects = names(d_pre_impute %>% select(-all_of(key_cols), -all_of(imputevars)))
+pred[imputevars, fixed_effects] = 1
+
+
+mice(d_pre_impute, meth = meth, pred = pred, m = 5,
+     maxit = 10, seed = 1234, print = FALSE)
+
+
+
+pred[imputevars, paste("x", 2:9, sep = "")] = 1
+pred[imputevars[1], imputevars[2]] = 1
+pred[imputevars[2], imputevars[1]] = 1
+pred[imputevars[3], imputevars[1:2]] = 1
+
 
 l_mids_jumpload = mice(d_pre_impute, method = method_impute, print = FALSE, seed = 1234)
 
+l_mids_jumpload$loggedEvents
 
-
+l_mids_jumpload[[10]]
 
 #-------------------------------------calculate weekly jump load
 # function to calculate sums across a user-specified window size
