@@ -304,8 +304,6 @@ diffdates = setdiff(dates_daily, dates)
 # and so we can treat this as MCAR.
 # need the correct variable types
 d_daily_jumps = d_daily_jumps %>% mutate(id_player  = as.integer(id_player))
-d_pre_impute = d_daily_jumps %>% mutate_at(vars(starts_with("Knee"), starts_with("Shoulder"), 
-                                 starts_with("LowBack"), starts_with("inj")), ~as.character(.))
 
 # will include variables that are 
 # good predictors of jump load variables
@@ -313,7 +311,7 @@ d_pre_impute = d_daily_jumps %>% mutate_at(vars(starts_with("Knee"), starts_with
 # will remove variables that are derived from other variables (i.e. non-filled injury data)
 # and likely to have 0.97+ correlation
 no_imputation_vars = names(
-d_pre_impute %>% select(session_type_raw,
+  d_daily_jumps %>% select(session_type_raw,
                         height_KE_updated,
                         height_ke_modified,
                         jump_height_max_percent,
@@ -323,15 +321,15 @@ d_pre_impute %>% select(session_type_raw,
                         starts_with("LowBack"),
                         ends_with("subst"),
                         inj_other,
-                        inj_knee, inj_shoulder, inj_lowback,
+                        inj_shoulder, inj_lowback,
                         Match_number, game_type)
 )
 
 # we extract these columns so we may join them on the imputed data later
-d_outvars = d_pre_impute %>% select(all_of(key_cols), all_of(no_imputation_vars))
+d_outvars = d_daily_jumps %>% select(all_of(key_cols), all_of(no_imputation_vars))
 
 # remove the vars from the imputation data
-d_pre_impute = d_pre_impute %>% select(-all_of(no_imputation_vars))
+d_pre_impute = d_daily_jumps %>% select(-all_of(no_imputation_vars))
 
 # specify the imputation model
 # we want to include injury data as a predictor
