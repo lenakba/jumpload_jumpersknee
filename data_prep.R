@@ -23,7 +23,7 @@ d_all = d_all %>%mutate_if(is.character, ~ifelse(. == "-", "not applicable", .))
 
 # add match variable and fix missing session-types
 d_all = d_all %>% mutate(SessionType = ifelse(is.na(SessionType), "no volleyball", SessionType))
-d_all = d_all %>% mutate(Match = as.character(ifelse(SessionType == "match", 1, 0)))
+d_all = d_all %>% mutate(Match = as.character(ifelse(!is.na(Match_number), 1, 0)))
 # calculate number of days since previous match
 d_match = d_all %>% select(Date, PlayerID , Team, Match)
 
@@ -183,7 +183,9 @@ d_daily = d_all %>% select(all_of(key_cols),
                  jump_height_max,
                  starts_with("Match"),
                  session_type,
-                 t_prevmatch)
+                 t_prevmatch, 
+                 -Match_Opponent, 
+                 -Match_Type)
 remove(d_all)
 # column specs for jump data
 jump_level_cols = cols(
@@ -286,12 +288,23 @@ diffdates = setdiff(dates_daily, dates)
 # note that the data are likely MAR
 # with more missing in the earlier years than in later years
 # need the correct variable types
-d_pre_impute = d_pre_impute %>% mutate_at(vars(starts_with("Knee"), starts_with("Shoulder"), 
+d_pre_impute = d_daily_jumps %>% mutate_at(vars(starts_with("Knee"), starts_with("Shoulder"), 
                                  starts_with("LowBack"), starts_with("inj")), ~as.character(.))
 
 # Year is not to be included in the multiple imputation
 # (one of the pitfalls of multiple imputation is to inlcude MAR-causing variables)
 # specify in imputation model
+library(mice)
+l_mult_imputed = d_pre_impute %>%
+  mice(seed = 1234, print = FALSE)
+
+l_mult_imputed[[1]]
+
+
+method_impute = make.method(d_pre_impute)
+method_impute["injury"] = ""
+mids.pmm.noinjury = mice(d_pre_impute, method = method_impute, print = FALSE, seed = 1234)
+
 
 
 
