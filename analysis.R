@@ -64,7 +64,7 @@ d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>%
   mutate(day = 1:n())
 
 d_analysis = d_analysis %>% group_by(d_imp, id_player) %>%
-  mutate(Fup = ifelse(inj_knee == 1, day, NA)) %>% 
+  mutate(Fup = ifelse(inj_knee_filled == 1, day, NA)) %>% 
   fill(Fup, .direction = "up") %>% 
   ungroup()
 
@@ -102,31 +102,15 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
 }
 
 # temporary select to reduce the amount of memory during computation
-d_selected = d_analysis %>% select(d_imp, id_player, date, jumps_n, inj_knee, day, Fup)
+d_selected = d_analysis %>% select(d_imp, id_player, date, jumps_n, inj_knee_filled, day, Fup)
 
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
-                              rename(Stop = day, Id = id_player, Event = inj_knee) %>% 
+                              rename(Stop = day, Id = id_player, Event = inj_knee_filled) %>% 
                               mutate(Start = lag(Stop),
                                      Start = ifelse(is.na(Start), 0, Start)) %>% ungroup()
 
 l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
-
-
-d_follow_up_times = l_surv[[1]] %>% distinct(Id, Fup, .keep_all = TRUE)
-d_surv_lim = map2(.x = d_follow_up_times$Id,
-                  .y = d_follow_up_times$Fup,
-                  ~l_surv[[1]] %>% filter(Id == .x) %>% slice(.y)) %>% 
-  bind_rows() %>% rename(event = Event, exit = Stop, id = Id)
-# extracting timepoints in which an event happened
-ftime = d_surv_lim %>% filter(event == 1) %>% distinct(exit) %>% arrange(exit) %>% pull()
-
-# arrange the survival data so that, for each individual, we have an interval of enter and exit times
-# for each of the exit times above, with the information of whether or not they were injured at that time
-# meaning we will have the same time intervals per participant
-d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id)
-d_counting_process
-
 
 # rearrange to counting process form
 #d_surv_cpform = d_surv %>% group_by(d_imp) %>% counting_process_form(.) %>% mutate(id = as.numeric(id)) %>% ungroup()
@@ -153,6 +137,8 @@ l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                         argvar = list(fun="ns", knots = 3),
                                         arglag = list(fun="ns", knots = 3)))
 
+qplot(data = l_surv_cpform[[1]], x=exit , y = event , facets= event~id)
+
 # fit DLNM
 l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
@@ -160,8 +146,6 @@ l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
                            match + t_prevmatch + frailty(id),
                            data = .x, y = FALSE, ties = "efron"))
 
-median()
-plot(survfit(f_sur~(total_usage > 5866.2),data=ff_usage))
 
 
 
@@ -174,6 +158,7 @@ l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
 
 
 # frailty
+# method to manually get the pooled results from coxme: https://github.com/amices/mice/issues/123
 l_fit_dlnm = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
                   ~coxme(Surv(enter, exit, event) ~ .y + position + age + 
