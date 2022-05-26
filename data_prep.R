@@ -252,7 +252,14 @@ d_daily_jumps = d_daily %>% left_join(d_unimputed_daily, by = key_cols)
 d_daily_jumps = d_daily_jumps %>% 
   mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n),
          jump_height_max_percent = ifelse(session_type == "no volleyball", 0, jump_height_max_percent),
-         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)) 
+         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum),
+         load_index_KE = ifelse(session_type == "no volleyball", 0, load_index_KE)) 
+
+# fill no matches in match results
+d_daily_jumps = d_daily_jumps %>% 
+  mutate(Match_Result = ifelse(Match == 0, "No match", Match_Result),
+         MatchSets = as.character(MatchSets),
+         MatchSets = ifelse(Match == 0, "No match", MatchSets)) 
 
 # Team B had no exposure registration for 4-11th of September 2017 (registration started 12th September), 
 # but they have injury data. These days should not be considered 
@@ -274,8 +281,8 @@ d_daily_jumps %>% slice(-pos_dates) %>%
                                   prop = n_missing_daily/denom, 
                                   perc = 100*prop)
 
-# write_excel_csv(d_daily_jumps, 
-#                 paste0(data_folder, "d_jump_daily.csv"), 
+# write_excel_csv(d_daily_jumps,
+#                 paste0(data_folder, "d_jump_daily.csv"),
 #                 delim = ";", na = "")
 
 # checking missing dates
@@ -296,6 +303,7 @@ diffdates = setdiff(dates_daily, dates)
 # of jumping outside the specific factors of that season/year
 # and so we can treat this as MCAR.
 # need the correct variable types
+d_daily_jumps = d_daily_jumps %>% mutate(id_player  = as.integer(id_player))
 d_pre_impute = d_daily_jumps %>% mutate_at(vars(starts_with("Knee"), starts_with("Shoulder"), 
                                  starts_with("LowBack"), starts_with("inj")), ~as.character(.))
 
@@ -315,7 +323,8 @@ d_pre_impute %>% select(session_type_raw,
                         starts_with("LowBack"),
                         ends_with("subst"),
                         inj_other,
-                        inj_knee, inj_shoulder, inj_lowback)
+                        inj_knee, inj_shoulder, inj_lowback,
+                        Match_number, game_type)
 )
 
 # we extract these columns so we may join them on the imputed data later
@@ -328,46 +337,38 @@ d_pre_impute = d_pre_impute %>% select(-all_of(no_imputation_vars))
 # we want to include injury data as a predictor
 # but we don't want it to be imputed
 library(mice)
-method_impute = make.method(d_pre_impute)
-method_impute["inj_knee_filled"] = ""
-method_impute["inj_other_filled"] = ""
 
 # specify which variables we need imputed
 imputevars = c("jumps_n", "weight", "jump_height_sum")
-meth = make.method(d_pre_impute)
-meth[1:length(meth)] = ""
-
-# the 2l.pan assumes a multilevel model 
-# see https://stefvanbuuren.name/fimd/sec-multioutcome.html#sec:multioutcome 
-meth[imputevars] = "2l.pan"
+# specify method for imputation model
+method_impute = make.method(d_pre_impute)
+method_impute["jumps_n"] = "pmm"
+# other tested options:
+#"2l.glm.pois" from package micemd
+#"2l.pan"
+#"2l.lmer"
 
 # specify the predictor matrix
 pred = make.predictorMatrix(d_pre_impute)
-pred[1:nrow(pred), 1:ncol(pred)] = 0
-# define player id as the class variable for our multilevel imputation model
+# define player id as the class variable
 pred[imputevars, "id_player"] = (-2)
 
 # define fixed effects in the model
 fixed_effects = names(d_pre_impute %>% select(-all_of(key_cols), -all_of(imputevars)))
 pred[imputevars, fixed_effects] = 1
 
-
-mice(d_pre_impute, meth = meth, pred = pred, m = 5,
+# run imputation
+l_mids_jumpload = mice(d_pre_impute, method = method_impute, pred = pred, m = 5,
      maxit = 10, seed = 1234, print = FALSE)
 
+# validate the imputation with plots
+densityplot(l_mids_jumpload, ~jumps_n)
+densityplot(l_mids_jumpload, ~weight)
+densityplot(l_mids_jumpload, ~jump_height_sum)
 
-
-pred[imputevars, paste("x", 2:9, sep = "")] = 1
-pred[imputevars[1], imputevars[2]] = 1
-pred[imputevars[2], imputevars[1]] = 1
-pred[imputevars[3], imputevars[1:2]] = 1
-
-
-l_mids_jumpload = mice(d_pre_impute, method = method_impute, print = FALSE, seed = 1234)
-
-l_mids_jumpload$loggedEvents
-
-l_mids_jumpload[[10]]
+d_mult_imputed = l_mids_jumpload %>% 
+                 mice::complete("long") %>% tibble() %>% 
+                left_join(d_outvars, by = all_of(key_cols))
 
 #-------------------------------------calculate weekly jump load
 # function to calculate sums across a user-specified window size
@@ -403,27 +404,33 @@ testthat::expect_equal(v_correct, v_calc)
 # We nest on each player in the data so that weekly sum-calculation
 # does not slide over different players
 window = 1
-nested_list = d_daily_jumps %>% group_by(id_player) %>% nest()
+nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
 nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jumps_n, window))
 d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
   ungroup() %>% mutate(index = 1:n()) %>% 
   rename(jumps_n_weekly = data)
 
-d_daily_jumps_joined = d_daily_jumps %>% mutate(index = 1:n()) %>% left_join(d_weekly_load, by = c("id_player", "index"))
+d_mult_imputed_joined = d_mult_imputed %>% 
+  mutate(index = 1:n()) %>% 
+  left_join(d_weekly_load, by = c(".imp", "id_player", "index"))
 
 # repeat for jump height
-nested_list = d_daily_jumps %>% group_by(id_player) %>% nest()
+nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
 nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jump_height_sum, window))
 d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
   ungroup() %>% mutate(index = 1:n()) %>% 
   rename(jumps_height_weekly = data)
-d_daily_jumps_joined2 = d_daily_jumps_joined %>% mutate(index = 1:n()) %>% left_join(d_weekly_load, by = c("id_player", "index"))
+d_mult_imputed_joined2 = d_mult_imputed_joined %>% 
+  mutate(index = 1:n()) %>% 
+  left_join(d_weekly_load, by = c(".imp", "id_player", "index"))
 
 # remove the first 6 rows per person for the weekly jump heights and jump frequencies
-d_pre_impute = d_daily_jumps_joined2 %>% 
+d_mult_imputed_joined2 = d_mult_imputed_joined2 %>% 
   group_by(id_player) %>% 
   mutate(index = 1:n(),
          jumps_n_weekly = ifelse(index %in% 1:6, NA, jumps_n_weekly),
          jumps_height_weekly = ifelse(index %in% 1:6, NA, jumps_height_weekly)
   ) %>% ungroup()
 
+# save as R object for analysis in separate script
+saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed.rds"))
