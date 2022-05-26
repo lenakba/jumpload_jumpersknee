@@ -54,7 +54,7 @@ d_confounders_freq = d_analysis %>% filter(d_imp == 1) %>%
 
 # add number of days
 d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>% 
-  group_by(id_player) %>% 
+  group_by(d_imp, id_player) %>% 
   mutate(day = 1:n())
 
 d_analysis = d_analysis %>% group_by(d_imp, id_player) %>%
@@ -96,7 +96,7 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
 }
 
 # temporary select to reduce the amount of memory during computation
-d_selected = d_analysis %>% select(d_imp, id_player, date, jumps_n, inj_knee)
+d_selected = d_analysis %>% select(d_imp, id_player, date, jumps_n, inj_knee, day, Fup)
 
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
@@ -129,7 +129,7 @@ l_surv_cpform = l_surv_cpform %>% map(. %>% mutate(id = as.character(id)) %>% as
 # make the crossbasis
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
                                         argvar = list(fun="ns", knots = 3),
-                                        arglag = list(fun="lin")))
+                                        arglag = list(fun="ns", knots = 3)))
 
 
 
