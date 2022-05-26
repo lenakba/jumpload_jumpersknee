@@ -304,6 +304,7 @@ diffdates = setdiff(dates_daily, dates)
 # and so we can treat this as MCAR.
 # need the correct variable types
 d_daily_jumps = d_daily_jumps %>% mutate(id_player  = as.integer(id_player))
+d_daily_jumps = d_daily_jumps %>% mutate_at(vars(starts_with("inj")), ~as.character(.))
 
 # will include variables that are 
 # good predictors of jump load variables
@@ -350,10 +351,6 @@ method_impute["jumps_n"] = "pmm"
 pred = make.predictorMatrix(d_pre_impute)
 # define player id as the class variable
 pred[imputevars, "id_player"] = (-2)
-
-# define fixed effects in the model
-fixed_effects = names(d_pre_impute %>% select(-all_of(key_cols), -all_of(imputevars)))
-pred[imputevars, fixed_effects] = 1
 
 # run imputation
 l_mids_jumpload = mice(d_pre_impute, method = method_impute, pred = pred, m = 5,
