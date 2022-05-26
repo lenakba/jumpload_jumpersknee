@@ -26,6 +26,9 @@ key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 lag_min = 7
 lag_max = 41
 
+# or consider first day of OSTRC week to be day of injury?
+lag_min = 0
+
 # select columns that may be useful in analyses
 d_analysis = d_jumpload %>% 
              select(all_of(key_cols), 
@@ -48,8 +51,8 @@ d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj")), ~as.numeric(.))
 # first, we analyze jump frequency
 d_confounders_freq = d_analysis %>% filter(d_imp == 1) %>% 
   distinct(id_player, date, .keep_all = TRUE) %>% 
-  select(id_player, date, age, jump_height_max, position, match, t_prevmatch) %>% 
-  mutate(position  = factor(position ),
+  select(id_player, date, age, jump_height_max, position, match, t_prevmatch, jumps_n_weekly) %>% 
+  mutate(position  = factor(position),
          match = factor(match))
 
 # add number of days
@@ -121,10 +124,12 @@ l_q_mat = map2(.x = l_surv_cpform,
                .y = l_tl_hist_spread_day, 
                ~calc_q_matrix(.x, .y))
 
+d_date_keys = d_surv %>% filter(d_imp == 1) %>% select(id = Id, exit = Stop, date) 
+l_surv_cpform = l_surv_cpform %>% map(. %>%  left_join(d_date_keys, by = c("id", "exit")))
 
 # add confounders back to datasets
-l_surv_cpform = l_surv_cpform %>% map(. %>% mutate(id = as.character(id)) %>% as_tibble() %>%
-                                        left_join(d_confounders_freq, by = c("id" = "id_player")))
+l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble() %>%
+                                        left_join(d_confounders_freq, by = c("id" = "id_player", "date")))
 
 # make the crossbasis
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
