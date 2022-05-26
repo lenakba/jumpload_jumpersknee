@@ -10,6 +10,9 @@ options(scipen = 30,
 data_folder = "D:\\phd\\jump load\\data\\"
 d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
 
+# number of injuries in the data
+d_jumpload %>% filter(.imp == 1) %>% summarise(sum = sum(as.numeric(inj_knee), na.rm = TRUE))
+
 # just testing that the data is valid
 d_jumpload %>% filter(is.na(id_player))
 any(duplicated(d_jumpload))
@@ -69,11 +72,11 @@ d_analysis = d_analysis %>% group_by(d_imp, id_player) %>%
 
 # function to arrange survival data in counting process form
 counting_process_form = function(d_survival_sim){
-  d_follow_up_times = d_survival_sim %>% distinct(Id, Fup)
+  d_follow_up_times = d_survival_sim %>% distinct(Id, Fup, .keep_all = TRUE)
   d_surv_lim = map2(.x = d_follow_up_times$Id,
                     .y = d_follow_up_times$Fup,
                     ~d_survival_sim %>% filter(Id == .x) %>% slice(.y)) %>% 
-    bind_rows() %>% select(event = Event, exit = Stop, id = Id)
+    bind_rows() %>% rename(event = Event, exit = Stop, id = Id)
   
   # extracting timepoints in which an event happened
   ftime = d_surv_lim %>% filter(event == 1) %>% distinct(exit) %>% arrange(exit) %>% pull()
@@ -82,7 +85,7 @@ counting_process_form = function(d_survival_sim){
   # for each of the exit times above, with the information of whether or not they were injured at that time
   # meaning we will have the same time intervals per participant
   d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id)
-  d_counting_process
+  d_counting_process %>% select(-Start, -Fup)
 }
 
 # function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
@@ -109,9 +112,26 @@ d_surv = d_selected %>% group_by(d_imp, id_player) %>%
 
 l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
 
+
+d_follow_up_times = l_surv[[1]] %>% distinct(Id, Fup, .keep_all = TRUE)
+d_surv_lim = map2(.x = d_follow_up_times$Id,
+                  .y = d_follow_up_times$Fup,
+                  ~l_surv[[1]] %>% filter(Id == .x) %>% slice(.y)) %>% 
+  bind_rows() %>% rename(event = Event, exit = Stop, id = Id)
+# extracting timepoints in which an event happened
+ftime = d_surv_lim %>% filter(event == 1) %>% distinct(exit) %>% arrange(exit) %>% pull()
+
+# arrange the survival data so that, for each individual, we have an interval of enter and exit times
+# for each of the exit times above, with the information of whether or not they were injured at that time
+# meaning we will have the same time intervals per participant
+d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id)
+d_counting_process
+
+
 # rearrange to counting process form
 #d_surv_cpform = d_surv %>% group_by(d_imp) %>% counting_process_form(.) %>% mutate(id = as.numeric(id)) %>% ungroup()
 l_surv_cpform =  l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
+l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble())
 
 # arrange the exposure history in wide format in a matrix
 l_tl_hist = l_surv %>% map(. %>% select(Id, jumps_n, Stop))
@@ -124,18 +144,62 @@ l_q_mat = map2(.x = l_surv_cpform,
                .y = l_tl_hist_spread_day, 
                ~calc_q_matrix(.x, .y))
 
-d_date_keys = d_surv %>% filter(d_imp == 1) %>% select(id = Id, exit = Stop, date) 
-l_surv_cpform = l_surv_cpform %>% map(. %>%  left_join(d_date_keys, by = c("id", "exit")))
-
 # add confounders back to datasets
-l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble() %>%
-                                        left_join(d_confounders_freq, by = c("id" = "id_player", "date")))
+l_surv_cpform = l_surv_cpform %>% map(.  %>%
+                                      left_join(d_confounders_freq, by = c("id" = "id_player", "date")))
 
 # make the crossbasis
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
                                         argvar = list(fun="ns", knots = 3),
                                         arglag = list(fun="ns", knots = 3)))
 
+# fit DLNM
+l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxph(Surv(enter, exit, event) ~ .y + position + age + jump_height_max + 
+                           match + t_prevmatch + frailty(id),
+                           data = .x, y = FALSE, ties = "efron"))
+
+median()
+plot(survfit(f_sur~(total_usage > 5866.2),data=ff_usage))
+
+
+
+library(coxme)
+# no frailty
+l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxph(Surv(enter, exit, event) ~ .y + position + age + 
+                           jump_height_max + match + t_prevmatch, data = .x))
+
+
+# frailty
+l_fit_dlnm = map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxme(Surv(enter, exit, event) ~ .y + position + age + 
+                           jump_height_max + match + t_prevmatch + (1 | id), data = .x))
+
+AIC(l_fit_dlnm_nofrailty[[1]])
+AIC(l_fit_dlnm[[1]])
+
+class(l_fit_dlnm_nofrailty[[1]])
+class(l_fit_dlnm[[1]])
+
+l_fit_dlnm_nofrailty[[1]]
+
+summary(l_fit_dlnm_nofrailty[[1]])
+
+l_fit_dlnm %>% map(~as.mira(.)) %>% pool()
+
+as.mira(l_fit_dlnm[[1]]) 
+as.coxph(l_fit_dlnm[[1]])
+
+library(mice)
+library(broom)
+library(broom.mixed)
+library(eha)
+library(ehahelper)
+d_pooled = summary(l_fit_dlnm %>% mice::pool(), conf.int = TRUE, exponentiate = TRUE) %>% as_tibble() %>% mutate_if(is.numeric, ~round(.,3))
 
 
 
