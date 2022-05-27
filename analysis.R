@@ -113,6 +113,8 @@ find_events = function(d, id){
   l1mann = replicate(length(from_rows), d1, simplify = FALSE)
   l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
                        function(x, y, z) slice(z, x:y))
+  event_ids = 1:length(l_data1person)
+  l_data1person = map2(l_data1person, event_ids, ~.x %>% mutate(id_event = .y))
   
   # collect list of intervals to dataset
   d_1person = l_data1person %>% bind_rows()
@@ -136,20 +138,30 @@ for(i in datasets){
 }
 
 # add on the players without any symptoms
-d_time_to_sympt = bind_rows(d_maindata, d_analysis %>% filter(id_player %in% no_inj_players))
+d_time_to_sympt = bind_rows(d_maindata, d_analysis %>% filter(id_player %in% no_inj_players)) %>% 
+                  mutate(id_event = ifelse(id_player %in% no_inj_players, 1, id_event)) %>% 
+                  rename(not_unique_id = id_event) 
+
+d_eventid = d_time_to_sympt %>% 
+      distinct(id_player, not_unique_id) %>% mutate(id_event = 1:n())
+d_time_to_sympt = d_time_to_sympt %>% 
+                  left_join(d_eventid, by = c("id_player", "not_unique_id")) %>% 
+                  select(-not_unique_id)
 
 # find follow up time per symptom episode, per player
-d_events = d_time_to_sympt %>% 
-  group_by(d_imp) %>% 
-  filter(inj_knee == 1) %>% mutate(id_event = 1:n()) %>% 
-  ungroup() %>% select(d_imp, id_player, date, id_event)
+# d_events = d_time_to_sympt %>% 
+#   group_by(d_imp) %>% 
+#   filter(inj_knee == 1) %>% mutate(id_event = 1:n()) %>% 
+#   ungroup() %>% select(d_imp, id_player, date, id_event)
+# 
+# d_time_to_sympt = d_time_to_sympt %>% arrange(d_imp, id_player, date) %>% 
+#   left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
+#   group_by(d_imp, id_player) %>%
+#   fill(id_event, .direction = "up") %>%
+#   group_by(d_imp, id_player, id_event) %>%
+#   mutate(Fup = n(), day = 1:n()) %>% ungroup()
 
-d_time_to_sympt = d_time_to_sympt %>% arrange(d_imp, id_player, date) %>% 
-  left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
-  group_by(d_imp, id_player) %>%
-  fill(id_event, .direction = "up") %>%
-  group_by(d_imp, id_player, id_event) %>%
-  mutate(Fup = n(), day = 1:n()) %>% ungroup()
+
 
 #---------------------------------------- Preparing for DLNM
 
@@ -195,6 +207,8 @@ d_confounders_freq = d_time_to_sympt %>% filter(d_imp == 1) %>%
 d_selected = d_time_to_sympt %>% select(d_imp, id_player, id_event, date, jumps_n, inj_knee, day, Fup)
 d_selected = d_selected %>% mutate(inj_knee = ifelse(is.na(inj_knee), 0, inj_knee))
 
+
+
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
                               rename(Stop = day, Id = id_event, Event = inj_knee) %>% 
@@ -207,21 +221,29 @@ l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
 l_surv_cpform = l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
 l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble() %>% select(-date, -jumps_n))
 
+# add confounders back to datasets
+l_surv_cpform = l_surv_cpform %>% 
+  map(.  %>% left_join(d_confounders_freq, 
+                       by = c("id_player", "id" = "id_event", "exit" = "day")))
+
 # arrange the exposure history in wide format in a matrix
-l_tl_hist = l_surv %>% map(. %>% select(Id, jumps_n, Stop))
+l_tl_hist = l_surv %>% map(. %>% select(id_player, Id, jumps_n, Stop))
+l_test = l_tl_hist[[1]] %>% group_by(id_player) %>% nest()
+
+l_tl_hist_spread_day = l_test$data  %>% 
+                       map(. %>% 
+                           pivot_wider(names_from = Stop, values_from = jumps_n) %>% 
+                           select(-Id) %>% as.matrix)
+
+
 l_tl_hist_spread_day = 
-  l_tl_hist %>% map(. %>% pivot_wider(names_from = Stop, values_from = jumps_n) %>% 
+  l_tl_hist %>% map(. %>% group_by(id_player) %>% pivot_wider(names_from = Stop, values_from = jumps_n) %>% 
                       select(-Id) %>% as.matrix)
 
 # calc Q matrices
 l_q_mat = map2(.x = l_surv_cpform,
                .y = l_tl_hist_spread_day, 
                ~calc_q_matrix(.x, .y))
-
-# add confounders back to datasets
-l_surv_cpform = l_surv_cpform %>% 
-                map(.  %>% left_join(d_confounders_freq, 
-                                     by = c("id_player", "id" = "id_event", "exit" = "day")))
 
 # make the crossbasis
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
