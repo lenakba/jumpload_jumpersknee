@@ -193,6 +193,7 @@ d_confounders_freq = d_time_to_sympt %>% filter(d_imp == 1) %>%
 
 # temporary select to reduce the amount of memory during computation
 d_selected = d_time_to_sympt %>% select(d_imp, id_player, id_event, date, jumps_n, inj_knee, day, Fup)
+d_selected = d_selected %>% mutate(inj_knee = ifelse(is.na(inj_knee), 0, inj_knee))
 
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
@@ -204,10 +205,7 @@ l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
 
 # rearrange to counting process form
 l_surv_cpform = l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
-l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble())
-
-
-l_surv[[1]] %>% filter(id_player == 1) %>% View()
+l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble() %>% select(-date, -jumps_n))
 
 # arrange the exposure history in wide format in a matrix
 l_tl_hist = l_surv %>% map(. %>% select(Id, jumps_n, Stop))
@@ -221,8 +219,9 @@ l_q_mat = map2(.x = l_surv_cpform,
                ~calc_q_matrix(.x, .y))
 
 # add confounders back to datasets
-l_surv_cpform = l_surv_cpform %>% map(.  %>%
-                                      left_join(d_confounders_freq, by = c("id_player", "id" = "id_event", "exit" = "day")))
+l_surv_cpform = l_surv_cpform %>% 
+                map(.  %>% left_join(d_confounders_freq, 
+                                     by = c("id_player", "id" = "id_event", "exit" = "day")))
 
 # make the crossbasis
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
