@@ -86,49 +86,6 @@ no_inj_players = d_analysis %>% group_by(id_player) %>% summarise(sum = sum(inj_
 d_inj_only = d_analysis %>% filter(!id_player %in% no_inj_players)
 ids = d_inj_only %>% distinct(id_player) %>% pull()
 
-
-
-
-
-
-d1 = d_analysis %>% select(date, id_player, inj_knee_filled) %>% filter(id_player == 1)
-
-# find intervals
-pos_symptoms = which(d1$inj_knee_filled == 1)
-big_skips = lead(pos_symptoms)-pos_symptoms
-pos_from = which(big_skips>1)
-
-from_after_first = pos_symptoms[pos_from]+1
-to_after_first = pos_symptoms[pos_from+1]
-# append to the first extraction
-from_rows = c(1, from_after_first)
-to_rows = c(pos_symptoms[1], to_after_first)
-
-# if player ends without sympts, needs to be included
-if((d1 %>% nrow()) > last(pos_symptoms)){
-  from = last(pos_symptoms) + 1
-  end = d1 %>% nrow()
-  from_rows = c(from_rows, from)
-  to_rows = c(to_rows, end)
-}
-
-# slice number of times equal to number of intervals
-l1mann = replicate(length(from_rows), d1, simplify = FALSE)
-l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
-                     function(x, y, z) slice(z, x:y))
-l_data1person[[2]]
-# collect list of intervals to dataset
-d_1person = l_data1person %>% bind_rows()
-d_1person
-
-
-
-
-
-
-
-
-
 # function to find event intervals and append them to a dataset
 find_events = function(d, id){
   d1 = d %>% filter(id_player == id)
