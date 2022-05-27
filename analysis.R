@@ -60,10 +60,15 @@ d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>%
   group_by(d_imp, id_player) %>% 
   mutate(day = 1:n())
 
-d_analysis = d_analysis %>% group_by(d_imp, id_player) %>%
-  mutate(Fup = ifelse(inj_knee_filled == 1, day, NA)) %>% 
-  fill(Fup, .direction = "up") %>% 
-  ungroup()
+d_injes = d_analysis  %>% 
+  group_by(d_imp, id_player) %>% 
+  filter(inj_knee_filled == 1) %>% mutate(inj_n = 1:n()) %>% 
+  ungroup() %>% select(d_imp, id_player, date, day, inj_n)
+
+d_analysis = d_analysis %>% left_join(d_injes, by = c("d_imp", "id_player", "date", "day")) %>% 
+  group_by(d_imp, id_player) %>%
+   fill(inj_n, .direction = "up") %>% group_by(d_imp, id_player, inj_n) %>% 
+  mutate(Fup = 1:n()) %>% ungroup()
 
 #---------------------------------------- Preparing for DLNM
 
@@ -128,7 +133,7 @@ d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, sta
 
 d_surv_lim %>% select(id, date, Start, exit, Fup, event)
 d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
-  mutate(index_start = seq(1, length(Start)))
+  mutate(index_start = seq(1, length(Start))) %>% View()
 
 d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
   mutate(index_start = seq(from = Start[1], 
