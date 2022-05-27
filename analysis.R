@@ -48,18 +48,8 @@ d_analysis = d_jumpload %>%
 
 d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj")), ~as.numeric(.))
 
-# first, we analyze jump frequency
-d_confounders_freq = d_analysis %>% filter(d_imp == 1) %>% 
-  distinct(id_player, date, .keep_all = TRUE) %>% 
-  select(id_player, date, age, jump_height_max, position, match, t_prevmatch, jumps_n_weekly) %>% 
-  mutate(position  = factor(position),
-         match = factor(match))
-
-#d_selected = d_analysis %>% select(d_imp, date, id_player, inj_knee_filled)
-
 # add number of days
-d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>% 
-  group_by(d_imp, id_player)
+d_analysis = d_analysis %>% arrange(d_imp, id_player, date)
 
 # add the follow-up time to each injury
 d_events = d_analysis  %>% 
@@ -84,6 +74,72 @@ d_events = d_analysis  %>%
 #   mutate(Fup = n(), day = 1:n()) %>% ungroup()
 
 # we can also assume that we are taking the "time to next symptom week"
+# if they have symptoms multiple weeks in a row, that is still considered 1 symptom week
+# we can call this a jumper's knee episode
+
+
+d_test = d_analysis %>% 
+  select(d_imp, date, id_player, inj_knee, inj_knee_filled) %>% 
+  mutate(inj_knee_filled = ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
+
+no_inj_players = d_test %>% group_by(id_player) %>% summarise(sum = sum(inj_knee_filled)) %>% 
+  ungroup %>% filter(sum == 0) %>% pull(id_player)
+
+d_test = d_test %>% filter(!id_player %in% no_inj_players)
+ids = d_test %>% distinct(id_player) %>% pull()
+
+
+
+d_test1 = d_test %>% filter(d_imp == 1)
+
+find_events = function(d, id){
+  d1 = d %>% filter(id_player == id)
+  
+  pos_symptoms = which(d1$inj_knee_filled == 1)
+  big_skips = lead(pos_symptoms)-pos_symptoms
+  pos_from = which(big_skips>1)
+  
+  from_after_first = pos_symptoms[pos_from]+1
+  to_after_first = pos_symptoms[pos_from+1]
+  # append to the first extraction
+  from_rows = c(1, from_after_first)
+  to_rows = c(pos_symptoms[1], to_after_first)
+  
+  l1mann = replicate(length(from_rows), d1, simplify = FALSE)
+  
+  l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
+                       function(x, y, z) slice(z, x:y))
+  
+  d_1person = l_data1person %>% bind_rows()
+  d_1person
+}
+
+find_events(d_test1, 16)
+
+d_noe = data.frame()
+for(i in d_test$d_imp){
+
+tempdata = d_test %>% filter(d_imp == i)  
+  
+    d_1person = data.frame()
+    for(i in ids){
+    tempdata = find_events(d_test1, i)
+    d_1person = rbind(d_1person, tempdata)
+    }
+
+d_noe = rbind(d_noe, d_noe_annet)
+d_noe
+
+}
+
+
+d_noe
+
+
+
+d_test %>% group_by(d_imp, id_player)
+
+d_test %>% filter(inj_knee_filled == 1)
 
 d_events = d_analysis  %>% 
   group_by(d_imp) %>% 
@@ -91,7 +147,7 @@ d_events = d_analysis  %>%
   ungroup() %>% select(d_imp, id_player, date, id_event)
 
 
-d_test = d_analysis %>% select(d_imp, date, id_player, inj_knee)
+d_test = d_analysis %>% select(d_imp, date, id_player, inj_knee, inj_knee_filled)
 
 d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>% 
   left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
@@ -106,7 +162,7 @@ d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>%
 
 # function to arrange survival data in counting process form
 counting_process_form = function(d_survival_sim){
-  d_follow_up_times = d_survival_sim %>% distinct(Id, Fup, .keep_all = TRUE)
+  d_follow_up_times = d_survival_sim %>% distinct(Id, Fup)
   d_surv_lim = map2(.x = d_follow_up_times$Id,
                     .y = d_follow_up_times$Fup,
                     ~d_survival_sim %>% filter(Id == .x) %>% slice(.y)) %>% 
@@ -136,10 +192,16 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
 }
 
 # temporary select to reduce the amount of memory during computation
-d_selected = d_analysis %>% select(d_imp, id_player, id_event, date, inj_knee, day, Fup)
+d_selected = d_analysis %>% select(d_imp, id_player, id_event, date, jumps_n, inj_knee, day, Fup)
 
+# first, we analyze jump frequency
+d_confounders_freq = d_analysis %>% filter(d_imp == 1) %>% 
+  distinct(id_player, date, .keep_all = TRUE) %>% 
+  select(id_player, id_event, day, date, age, jump_height_max, position, match, t_prevmatch, jumps_n_weekly) %>% 
+  mutate(position  = factor(position),
+         match = factor(match))
 
-d_selected = d_selected %>% mutate(inj_knee_filled = ifelse(is.na(inj_knee), 0, inj_knee_filled))
+d_selected = d_selected %>% mutate(inj_knee = ifelse(is.na(inj_knee), 0, inj_knee))
 
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
@@ -149,44 +211,12 @@ d_surv = d_selected %>% group_by(d_imp, id_player) %>%
 
 l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
 
-
-d_follow_up_times = l_surv[[1]] %>% distinct(Id, Fup, .keep_all = TRUE)
-d_surv_lim = map2(.x = d_follow_up_times$Id,
-                  .y = d_follow_up_times$Fup,
-                  ~l_surv[[1]] %>% filter(Id == .x) %>% slice(.y)) %>% 
-  bind_rows() %>% rename(event = Event, exit = Stop, id = Id)
-
-# extracting timepoints in which an event happened
-ftime = d_surv_lim %>% filter(event == 1) %>% distinct(exit) %>% arrange(exit) %>% pull()
-
-l_surv[[1]] %>% filter(Event == 0)
-
-# arrange the survival data so that, for each individual, we have an interval of enter and exit times
-# for each of the exit times above, with the information of whether or not they were injured at that time
-# meaning we will have the same time intervals per participant
-d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% 
-                     arrange(id, date) %>% tibble()
-
-
-d_surv_lim %>% select(id, date, Start, exit, Fup, event)
-d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
-  mutate(index_start = seq(1, length(Start)))
-
-d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
-  mutate(index_start = seq(from = Start[1], 
-                           to = Start[1]+(length(Start)-1))) %>% ungroup() %>% 
-  select(-date, -jumps_n, -Fup, -Start) %>% 
-  left_join(l_surv[[1]] %>% select(id = Id, date, Start), by = c("id", "index_start" = "Start"))
-
-
-l_surv[[1]] %>% filter(Id == 1) %>% nrow()
-d_counting_process %>% tibble() %>% select(-Start, -Fup) %>% filter(id == 1) %>% nrow()
-
-d_counting_process %>% select(-Start, -Fup) %>% filter(id == 1) %>% View()
 # rearrange to counting process form
-#d_surv_cpform = d_surv %>% group_by(d_imp) %>% counting_process_form(.) %>% mutate(id = as.numeric(id)) %>% ungroup()
-l_surv_cpform =  l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
+l_surv_cpform = l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
 l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble())
+
+
+l_surv[[1]] %>% filter(id_player == 1) %>% View()
 
 # arrange the exposure history in wide format in a matrix
 l_tl_hist = l_surv %>% map(. %>% select(Id, jumps_n, Stop))
@@ -201,7 +231,7 @@ l_q_mat = map2(.x = l_surv_cpform,
 
 # add confounders back to datasets
 l_surv_cpform = l_surv_cpform %>% map(.  %>%
-                                      left_join(d_confounders_freq, by = c("id" = "id_player", "date")))
+                                      left_join(d_confounders_freq, by = c("id_player", "id" = "id_event", "exit" = "day")))
 
 # make the crossbasis
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
@@ -210,7 +240,7 @@ l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
 # fit DLNM
 l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
-                  ~coxph(Surv(enter, exit, event, type = "interval") ~ .y + position + age + jump_height_max + 
+                  ~coxph(Surv(enter, exit, event) ~ .y + position + age + jump_height_max + 
                            match + t_prevmatch + frailty(id),
                            data = .x, y = FALSE, ties = "efron"))
 
