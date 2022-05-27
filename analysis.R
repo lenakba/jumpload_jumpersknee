@@ -76,25 +76,64 @@ d_events = d_analysis  %>%
 # we can also assume that we are taking the "time to next symptom week"
 # if they have symptoms multiple weeks in a row, that is still considered 1 symptom week
 # we can call this a jumper's knee episode
+d_analysis = d_analysis %>% mutate(inj_knee_filled = 
+                                  ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
 
-
-d_test = d_analysis %>% 
-  select(d_imp, date, id_player, inj_knee, inj_knee_filled) %>% 
-  mutate(inj_knee_filled = ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
-
-no_inj_players = d_test %>% group_by(id_player) %>% summarise(sum = sum(inj_knee_filled)) %>% 
+no_inj_players = d_analysis %>% group_by(id_player) %>% summarise(sum = sum(inj_knee_filled)) %>% 
   ungroup %>% filter(sum == 0) %>% pull(id_player)
 
-d_test = d_test %>% filter(!id_player %in% no_inj_players)
-ids = d_test %>% distinct(id_player) %>% pull()
+# fetch those with injuries
+d_inj_only = d_analysis %>% filter(!id_player %in% no_inj_players)
+ids = d_inj_only %>% distinct(id_player) %>% pull()
 
 
 
-d_test1 = d_test %>% filter(d_imp == 1)
 
+
+
+d1 = d_analysis %>% select(date, id_player, inj_knee_filled) %>% filter(id_player == 1)
+
+# find intervals
+pos_symptoms = which(d1$inj_knee_filled == 1)
+big_skips = lead(pos_symptoms)-pos_symptoms
+pos_from = which(big_skips>1)
+
+from_after_first = pos_symptoms[pos_from]+1
+to_after_first = pos_symptoms[pos_from+1]
+# append to the first extraction
+from_rows = c(1, from_after_first)
+to_rows = c(pos_symptoms[1], to_after_first)
+
+# if player ends without sympts, needs to be included
+if((d1 %>% nrow()) > last(pos_symptoms)){
+  from = last(pos_symptoms) + 1
+  end = d1 %>% nrow()
+  from_rows = c(from_rows, from)
+  to_rows = c(to_rows, end)
+}
+
+# slice number of times equal to number of intervals
+l1mann = replicate(length(from_rows), d1, simplify = FALSE)
+l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
+                     function(x, y, z) slice(z, x:y))
+l_data1person[[2]]
+# collect list of intervals to dataset
+d_1person = l_data1person %>% bind_rows()
+d_1person
+
+
+
+
+
+
+
+
+
+# function to find event intervals and append them to a dataset
 find_events = function(d, id){
   d1 = d %>% filter(id_player == id)
   
+  # find intervals
   pos_symptoms = which(d1$inj_knee_filled == 1)
   big_skips = lead(pos_symptoms)-pos_symptoms
   pos_from = which(big_skips>1)
@@ -105,58 +144,55 @@ find_events = function(d, id){
   from_rows = c(1, from_after_first)
   to_rows = c(pos_symptoms[1], to_after_first)
   
-  l1mann = replicate(length(from_rows), d1, simplify = FALSE)
+  # if player ends without sympts, needs to be included
+  if((d1 %>% nrow()) > last(pos_symptoms)){
+    from = last(pos_symptoms) + 1
+    end = d1 %>% nrow()
+    from_rows = c(from_rows, from)
+    to_rows = c(to_rows, end)
+  }
   
+  # slice number of times equal to number of intervals
+  l1mann = replicate(length(from_rows), d1, simplify = FALSE)
   l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
                        function(x, y, z) slice(z, x:y))
   
+  # collect list of intervals to dataset
   d_1person = l_data1person %>% bind_rows()
   d_1person
 }
 
-find_events(d_test1, 16)
+# running above function for each player
+# for each imputed dataset
+datasets = d_inj_only %>% distinct(d_imp) %>% pull() 
+d_maindata = data.frame()
+for(i in datasets){
 
-d_noe = data.frame()
-for(i in d_test$d_imp){
-
-tempdata = d_test %>% filter(d_imp == i)  
-  
+    tempdata2 = d_inj_only %>% filter(d_imp == i)  
     d_1person = data.frame()
-    for(i in ids){
-    tempdata = find_events(d_test1, i)
+    for(j in ids){
+    tempdata = find_events(tempdata2, j)
     d_1person = rbind(d_1person, tempdata)
+    d_1person
     }
-
-d_noe = rbind(d_noe, d_noe_annet)
-d_noe
-
+    d_maindata = rbind(d_maindata, d_1person)
 }
 
+# add on the players without any symptoms
+d_time_to_sympt = bind_rows(d_maindata, d_analysis %>% filter(id_player %in% no_inj_players))
 
-d_noe
-
-
-
-d_test %>% group_by(d_imp, id_player)
-
-d_test %>% filter(inj_knee_filled == 1)
-
-d_events = d_analysis  %>% 
+# find follow up time per symptom episode, per player
+d_events = d_time_to_sympt %>% 
   group_by(d_imp) %>% 
   filter(inj_knee == 1) %>% mutate(id_event = 1:n()) %>% 
   ungroup() %>% select(d_imp, id_player, date, id_event)
 
-
-d_test = d_analysis %>% select(d_imp, date, id_player, inj_knee, inj_knee_filled)
-
-d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>% 
+d_time_to_sympt = d_time_to_sympt %>% arrange(d_imp, id_player, date) %>% 
   left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
   group_by(d_imp, id_player) %>%
   fill(id_event, .direction = "up") %>%
   group_by(d_imp, id_player, id_event) %>%
-  slice(-(1:6)) %>% 
   mutate(Fup = n(), day = 1:n()) %>% ungroup()
-
 
 #---------------------------------------- Preparing for DLNM
 
@@ -191,17 +227,15 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
   q
 }
 
-# temporary select to reduce the amount of memory during computation
-d_selected = d_analysis %>% select(d_imp, id_player, id_event, date, jumps_n, inj_knee, day, Fup)
-
 # first, we analyze jump frequency
-d_confounders_freq = d_analysis %>% filter(d_imp == 1) %>% 
+d_confounders_freq = d_time_to_sympt %>% filter(d_imp == 1) %>% 
   distinct(id_player, date, .keep_all = TRUE) %>% 
   select(id_player, id_event, day, date, age, jump_height_max, position, match, t_prevmatch, jumps_n_weekly) %>% 
   mutate(position  = factor(position),
          match = factor(match))
 
-d_selected = d_selected %>% mutate(inj_knee = ifelse(is.na(inj_knee), 0, inj_knee))
+# temporary select to reduce the amount of memory during computation
+d_selected = d_time_to_sympt %>% select(d_imp, id_player, id_event, date, jumps_n, inj_knee, day, Fup)
 
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
