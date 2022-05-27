@@ -55,20 +55,52 @@ d_confounders_freq = d_analysis %>% filter(d_imp == 1) %>%
   mutate(position  = factor(position),
          match = factor(match))
 
+#d_selected = d_analysis %>% select(d_imp, date, id_player, inj_knee_filled)
+
 # add number of days
 d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>% 
-  group_by(d_imp, id_player) %>% 
-  mutate(day = 1:n())
+  group_by(d_imp, id_player)
 
-d_injes = d_analysis  %>% 
-  group_by(d_imp, id_player) %>% 
-  filter(inj_knee_filled == 1) %>% mutate(inj_n = 1:n()) %>% 
-  ungroup() %>% select(d_imp, id_player, date, day, inj_n)
+# add the follow-up time to each injury
+d_events = d_analysis  %>% 
+  group_by(d_imp) %>% 
+  filter(inj_knee_filled == 1) %>% mutate(id_event = 1:n()) %>% 
+  ungroup() %>% select(d_imp, id_player, date, id_event)
 
-d_analysis = d_analysis %>% left_join(d_injes, by = c("d_imp", "id_player", "date", "day")) %>% 
+# how to structure injuries
+# multiple ways
+# here we assume that each interval is new per player
+
+# d_analysis = d_analysis %>% group_by(d_imp, id_player) %>%
+#   mutate(Fup = ifelse(inj_knee_filled == 1, day, NA)) %>% 
+#   fill(Fup, .direction = "up") %>% 
+#   ungroup()
+
+# d_analysis_all = d_analysis %>% arrange(d_imp, id_player, date) %>% 
+#   left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
+#   group_by(d_imp, id_player) %>%
+#   fill(id_event, .direction = "up") %>%
+#   group_by(d_imp, id_player, id_event) %>%
+#   mutate(Fup = n(), day = 1:n()) %>% ungroup()
+
+# we can also assume that we are taking the "time to next symptom week"
+
+d_events = d_analysis  %>% 
+  group_by(d_imp) %>% 
+  filter(inj_knee == 1) %>% mutate(id_event = 1:n()) %>% 
+  ungroup() %>% select(d_imp, id_player, date, id_event)
+
+
+d_test = d_analysis %>% select(d_imp, date, id_player, inj_knee)
+
+d_analysis = d_analysis %>% arrange(d_imp, id_player, date) %>% 
+  left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
   group_by(d_imp, id_player) %>%
-   fill(inj_n, .direction = "up") %>% group_by(d_imp, id_player, inj_n) %>% 
-  mutate(Fup = 1:n()) %>% ungroup()
+  fill(id_event, .direction = "up") %>%
+  group_by(d_imp, id_player, id_event) %>%
+  slice(-(1:6)) %>% 
+  mutate(Fup = n(), day = 1:n()) %>% ungroup()
+
 
 #---------------------------------------- Preparing for DLNM
 
@@ -104,11 +136,14 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
 }
 
 # temporary select to reduce the amount of memory during computation
-d_selected = d_analysis %>% select(d_imp, id_player, date, jumps_n, inj_knee_filled, day, Fup)
-remove(d_analysis)
+d_selected = d_analysis %>% select(d_imp, id_player, id_event, date, inj_knee, day, Fup)
+
+
+d_selected = d_selected %>% mutate(inj_knee_filled = ifelse(is.na(inj_knee), 0, inj_knee_filled))
+
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
-                              rename(Stop = day, Id = id_player, Event = inj_knee_filled) %>% 
+                              rename(Stop = day, Id = id_event, Event = inj_knee) %>% 
                               mutate(Start = lag(Stop),
                                      Start = ifelse(is.na(Start), 0, Start)) %>% ungroup()
 
@@ -129,11 +164,13 @@ l_surv[[1]] %>% filter(Event == 0)
 # arrange the survival data so that, for each individual, we have an interval of enter and exit times
 # for each of the exit times above, with the information of whether or not they were injured at that time
 # meaning we will have the same time intervals per participant
-d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id, date)
+d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% 
+                     arrange(id, date) %>% tibble()
+
 
 d_surv_lim %>% select(id, date, Start, exit, Fup, event)
 d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
-  mutate(index_start = seq(1, length(Start))) %>% View()
+  mutate(index_start = seq(1, length(Start)))
 
 d_counting_process %>% tibble() %>% group_by(id, Start) %>% 
   mutate(index_start = seq(from = Start[1], 
@@ -173,7 +210,7 @@ l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
 # fit DLNM
 l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
-                  ~coxph(Surv(enter, exit, event) ~ .y + position + age + jump_height_max + 
+                  ~coxph(Surv(enter, exit, event, type = "interval") ~ .y + position + age + jump_height_max + 
                            match + t_prevmatch + frailty(id),
                            data = .x, y = FALSE, ties = "efron"))
 
@@ -184,7 +221,7 @@ library(coxme)
 # no frailty
 l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
-                  ~coxph(Surv(enter, exit, event) ~ .y + position + age + 
+                  ~coxph(Surv(enter, exit, event, type = "interval2") ~ .y + position + age + 
                            jump_height_max + match + t_prevmatch, data = .x))
 
 
@@ -192,7 +229,7 @@ l_fit_dlnm_nofrailty = map2(.x = l_surv_cpform,
 # method to manually get the pooled results from coxme: https://github.com/amices/mice/issues/123
 l_fit_dlnm = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
-                  ~coxme(Surv(enter, exit, event) ~ .y + position + age + 
+                  ~coxme(Surv(enter, exit, event, type = "interval2") ~ .y + position + age + 
                            jump_height_max + match + t_prevmatch + (1 | id), data = .x))
 
 AIC(l_fit_dlnm_nofrailty[[1]])
@@ -221,3 +258,58 @@ d_pooled = summary(l_fit_dlnm %>% mice::pool(), conf.int = TRUE, exponentiate = 
 
 library(icenReg)
 data(miceData)
+
+
+#----------------------------------------------example using tooth24 dataset
+
+# example from https://docs.ufpr.br/~giolo/CE063/Artigos/A4_Gomes%20et%20al%202009.pdf
+
+load(paste0(data_folder,"tooth24.RData")) 
+
+tooth24 %>% tibble()
+
+tooth24$cens=with(tooth24,ifelse(right==999,0,3))
+sur24b<-with(tooth24,Surv(left,right,cens,type="interval"))
+dim(sur24b)
+
+
+# 3 interval-censored (all our events are 3, since OSTRC is for a whole week)
+d_inj_number = d_analysis %>% group_by(d_imp, id_player) %>% 
+  filter(inj_knee_filled == 1) %>% mutate(inj_number = 1:n()) %>% 
+  ungroup() %>% select(d_imp, id_player, date, inj_number)
+
+d_analysis = d_analysis %>% 
+  left_join(d_inj_number, by = c("d_imp", "id_player", "date"))
+
+d_analysis = d_analysis %>% 
+  group_by(d_imp, id_player) %>% 
+  fill(inj_number, .direction = "up") %>% 
+  mutate(event = case_when(is.na(inj_knee_filled) & (inj_number == 1) ~ 2, 
+                           inj_knee_filled == 1 ~ 3,
+                           is.na(inj_knee_filled) ~ 0,
+                           TRUE ~ inj_knee_filled)) %>% 
+  select(-inj_number) %>% 
+  ungroup()
+
+
+# fix injuries to be in survival data format
+# 0 for right-censored
+# 1 for event
+# 2 left censored (any observation before the first OSTRC questionnaire)
+# 3 interval-censored
+d_inj_number = d_analysis %>% group_by(d_imp, id_player) %>% 
+  filter(inj_knee_filled == 1) %>% mutate(inj_number = 1:n()) %>% 
+  ungroup() %>% select(d_imp, id_player, date, inj_number)
+
+d_analysis = d_analysis %>% 
+  left_join(d_inj_number, by = c("d_imp", "id_player", "date"))
+
+d_analysis = d_analysis %>% 
+  group_by(d_imp, id_player) %>% 
+  fill(inj_number, .direction = "up") %>% 
+  mutate(inj_knee_event = case_when(is.na(inj_knee_filled) & (inj_number == 1) ~ 2,
+                                    is.na(inj_knee_filled) ~ 0,
+                                    TRUE ~ inj_knee_filled)) %>% 
+  select(-inj_number) %>% 
+  ungroup()
+
