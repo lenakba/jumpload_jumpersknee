@@ -48,10 +48,10 @@ d_analysis = d_jumpload %>%
 
 d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj")), ~as.numeric(.))
 
-# add number of days
+# arrange dates
 d_analysis = d_analysis %>% arrange(d_imp, id_player, date)
 
-# add the follow-up time to each injury
+# find the events
 d_events = d_analysis  %>% 
   group_by(d_imp) %>% 
   filter(inj_knee_filled == 1) %>% mutate(id_event = 1:n()) %>% 
@@ -194,7 +194,8 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
 # first, we analyze jump frequency
 d_confounders_freq = d_time_to_sympt %>% filter(d_imp == 1) %>% 
   distinct(id_player, date, .keep_all = TRUE) %>% 
-  select(id_player, id_event, day, date, age, jump_height_max, position, match, t_prevmatch, jumps_n_weekly) %>% 
+  select(id_player, id_event, day, date, age, jump_height_max, position, 
+         match, t_prevmatch, jumps_n_weekly, preseason, jump_height_sum) %>% 
   mutate(position  = factor(position),
          match = factor(match))
 
@@ -253,6 +254,28 @@ l_fit_dlnm = map2(.x = l_surv_cpform,
 
 AIC(l_fit_dlnm_nofrailty[[1]])
 AIC(l_fit_dlnm[[1]])
+
+summary(l_fit_dlnm[[1]])
+
+
+l_fit_preseason = map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxme(Surv(enter, exit, event) ~ preseason + (1 | id), data = .x))
+
+
+l_fit_preseason_mediatoradj = map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxme(Surv(enter, exit, event) ~ .y + preseason + jump_height_sum + t_prevmatch + (1 | id), data = .x))
+
+summary(l_fit_preseason[[1]])
+
+summary(l_fit_preseason_mediatoradj[[1]])
+
+
+l_fit_tprevmatch = map2(.x = l_surv_cpform,
+                       .y = l_cb_dlnm,
+                       ~coxme(Surv(enter, exit, event) ~ t_prevmatch + (1 | id), data = .x))
+
 
 #---------------------------------Figures 
 
@@ -367,12 +390,14 @@ d_preds_per_lag = as_tibble(mat_matRRfit[rownumber,]) %>%
          ci_low = mat_matRRfit_low[rownumber,],
          ci_high = mat_matRRfit_high[rownumber,])
 
+cairo_pdf("figure2_3d.pdf", width = 12, height = 7)
 persp(x = predvalues, y = lag_seq, mat_matRRfit, ticktype="detailed", 
       theta=230, ltheta=150, phi=40, lphi=30,
       ylab="Lag (Days)", zlab="HR", shade=0.75, 
       r=sqrt(3), d=5, cex.axis=1.2, cex.lab=1.2,
       border=grey(0.2), col = nih_distinct[1], 
       xlab = "N jumps", main = "3D plane of effects")
+dev.off()
 
 # exposure-response curve for lag 0
 lag_fixed = "lag0"
@@ -383,7 +408,7 @@ d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>%
          ci_low = mat_matRRfit_low[,colnumber],
          ci_high = mat_matRRfit_high[,colnumber])
 
-ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
+plot_dlnm2d1 = ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -400,7 +425,7 @@ d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>%
          ci_low = mat_matRRfit_low[,colnumber],
          ci_high = mat_matRRfit_high[,colnumber])
 
-ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
+plot_dlnm2d2 = ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -417,7 +442,7 @@ d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>%
          ci_low = mat_matRRfit_low[,colnumber],
          ci_high = mat_matRRfit_high[,colnumber])
 
-ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
+plot_dlnm2d3 = ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -426,7 +451,9 @@ ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
   xlab("N jumps") +
   ylab("HR on Day 27") 
 
-
+cairo_pdf("figure1.pdf", width = 10, height = 8)
+ggpubr::ggarrange(plot_cumul, plot_dlnm2d1, plot_dlnm2d2, plot_dlnm2d3, ncol = 2, nrow = 2, labels = c("A Cumulative effect", "B Risk on current day", "C Risk on 15th day", "D Risk on 27th day"))
+dev.off()
 
 
 
