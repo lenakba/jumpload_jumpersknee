@@ -54,28 +54,9 @@ d_analysis = d_analysis %>% arrange(d_imp, id_player, date)
 # find the events
 d_events = d_analysis  %>% 
   group_by(d_imp) %>% 
-  filter(inj_knee_filled == 1) %>% mutate(id_event = 1:n()) %>% 
+  filter(inj_knee == 1) %>% mutate(id_event = 1:n()) %>% 
   ungroup() %>% select(d_imp, id_player, date, id_event)
 
-# how to structure injuries
-# multiple ways
-# here we assume that each interval is new per player
-
-# d_analysis = d_analysis %>% group_by(d_imp, id_player) %>%
-#   mutate(Fup = ifelse(inj_knee_filled == 1, day, NA)) %>% 
-#   fill(Fup, .direction = "up") %>% 
-#   ungroup()
-
-# d_analysis_all = d_analysis %>% arrange(d_imp, id_player, date) %>% 
-#   left_join(d_events, by = c("d_imp", "id_player", "date")) %>%
-#   group_by(d_imp, id_player) %>%
-#   fill(id_event, .direction = "up") %>%
-#   group_by(d_imp, id_player, id_event) %>%
-#   mutate(Fup = n(), day = 1:n()) %>% ungroup()
-
-# we can also assume that we are taking the "time to next symptom week"
-# if they have symptoms multiple weeks in a row, that is still considered 1 symptom week
-# we can call this a jumper's knee episode
 d_analysis = d_analysis %>% mutate(inj_knee_filled = 
                                   ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
 
