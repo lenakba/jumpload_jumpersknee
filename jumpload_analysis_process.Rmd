@@ -1,0 +1,517 @@
+---
+title: "The process behind the jump load analysis"
+author: "Lena Kristin Bache-Mathiesen"
+output:
+  pdf_document:
+    toc: yes
+  word_document: default
+  html_document:
+    toc: yes
+sansfont: Calibri
+editor_options:
+  chunk_output_type: console
+---
+
+# Introduction
+This document showcases the process 
+behind the analyses performed in the jump load study.
+The aim of the study was to determine the relationship between
+jump load and jumper's knee. 
+That is, determine how jumping effects jumper's knee.
+We'd already made a causal diagram of the factors that enter
+the causal pathway between jump frequency, jump intensity, and jumper's knee symptoms.
+We'd also already made an analysis protocol. 
+So far, we've prepped the data for analysis by imputing 
+the missing data with multiple imputation.
+In the analysis protocl, 
+we'd reported that we were to do a Cox regression 
+with a frailty term (Frailty model), unless the proportional hazards 
+assumption is violated. That will be our first step.
+
+# Data preparation
+
+First, load required packages.
+`tidyverse` is for miscellaneous functions for reading data and
+working with list objects.
+
+```{r packages, warning=FALSE, echo = TRUE, message=FALSE}
+library(tidyverse) # data wrangling
+library(dlnm) # distributed lag non-linear models
+library(survival) # survival data functions and models
+```
+
+```{r options, warning=FALSE, echo = TRUE, message=FALSE}
+# so we don't have to deal with scientific notations
+# and strings aren't automatically read as factors:
+options(scipen = 30, 
+        stringsAsFactors = FALSE)
+```
+
+```{r reading, warning=FALSE, echo = TRUE, message=FALSE}
+data_folder = "D:\\phd\\jump load\\data\\"
+d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
+
+# define key columns (object used later)
+key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
+
+# define the min and max lag
+# (number of days since the jump load was performed)
+# Where 0 is the current day.
+# lag set at 4 weeks (28) as is often used in tl studies
+# we have no reason to suspect a longer time lag for volleyball.
+# day number 28 is 27 days after day 0, so,
+lag_min = 0
+lag_max = 27
+
+# select columns that may be useful in analyses
+d_analysis = d_jumpload %>% 
+             select(all_of(key_cols), 
+                 jumps_n, 
+                 jumps_n_weekly,
+                 jump_height_sum,
+                 jumps_height_weekly,
+                 jump_height_max,
+                 load_index_KE,
+                 starts_with("inj"), 
+                 year, month_day, season, 
+                 preseason,
+                 age, weight, height, position,
+                 session_type, match = Match, 
+                 t_prevmatch, game_type, match_sets_n = MatchSets,
+                 d_imp = .imp)
+
+d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj")), ~as.numeric(.))
+d_analysis = d_analysis %>% arrange(d_imp, id_player, date)
+```
+
+The injury data was initially structured with symptoms of jumper's knee (1)
+and no symptoms (0). The OSTRC questionnaire was handed out once a week,
+and the replies pertained to the previous 7 days. In `inj_knee`, an observation 
+is noted in the first of those 7 days. In the event of symptoms (1), 
+we don't know exactly when they appeared, only that it happened during those 7 days.
+This is known as interval-censored data. In the variable `inj_knee_filled`, any reply of 1 or 0 is
+spread along the days in which they belong. Missing data are gaps where we don't have OSTRC responses.
+
+```{r showinjurydata, warning=FALSE, echo = TRUE, message=FALSE}
+d_analysis %>% select(id_player, date, jumps_n, jump_height_sum, inj_knee, inj_knee_filled)
+```
+
+This proved challenging to structure and analyze.
+The jump load (number of jumps and jump height) were collected at the daily level.
+We prefer to analyze the data at the daily level rather than aggregate to a 
+weekly level. This can be done in many ways, but none that are perfect.
+Each structure has its advantages and disadvantages. 
+For the preliminary analyses, we considered a "time to first symptom-episode" approach.
+Here, we assumed that symptoms arose on the first day of the OSTRC week. This is a strong assumption
+(sometimes they would arise on the first day, sometimes on the second, sometimes on the 7th day...), 
+and will introduce uncertainty to the estimates.
+The advantage was that we could still use the Cox regression with frailty model, and
+we could model jump load at the daily level. To begin with, we only looked at jump frequency 
+(not other jump load research qeustions).
+
+```{r injury_prep_frailty, warning=FALSE, echo = TRUE, message=FALSE}
+
+# find the injury events, and give them an ID
+d_events = d_analysis  %>% 
+  group_by(d_imp) %>% 
+  filter(inj_knee_filled == 1) %>% mutate(id_event = 1:n()) %>% 
+  ungroup() %>% select(d_imp, id_player, date, id_event)
+
+# Assume that missing are censored observations
+d_analysis = d_analysis %>% mutate(inj_knee_filled = 
+                                  ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
+
+# find players who were never injured
+no_inj_players = d_analysis %>% group_by(id_player) %>% summarise(sum = sum(inj_knee_filled)) %>% 
+  ungroup %>% filter(sum == 0) %>% pull(id_player)
+
+# fetch those with injuries
+d_inj_only = d_analysis %>% filter(!id_player %in% no_inj_players)
+ids = d_inj_only %>% distinct(id_player) %>% pull()
+
+# function to find event episodes. 
+# we find each interval that starts with of inj_knee == 0, 
+# and ends with an event at some point inj_knee == 1. 
+find_events = function(d, id){
+  d1 = d %>% filter(id_player == id)
+  
+  # find intervals
+  pos_symptoms = which(d1$inj_knee_filled == 1)
+  big_skips = lead(pos_symptoms)-pos_symptoms
+  pos_from = which(big_skips>1)
+  
+  from_after_first = pos_symptoms[pos_from]+1
+  to_after_first = pos_symptoms[pos_from+1]
+  # append to the first extraction
+  from_rows = c(1, from_after_first)
+  to_rows = c(pos_symptoms[1], to_after_first)
+  
+  # if player ends without symptoms, needs to be included
+  if((d1 %>% nrow()) > last(pos_symptoms)){
+    from = last(pos_symptoms) + 1
+    end = d1 %>% nrow()
+    from_rows = c(from_rows, from)
+    to_rows = c(to_rows, end)
+  }
+  
+  # slice number of times equal to number of intervals
+  l1mann = replicate(length(from_rows), d1, simplify = FALSE)
+  l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
+                       function(x, y, z) slice(z, x:y))
+  event_ids = 1:length(l_data1person)
+  l_data1person = map2(l_data1person, event_ids, ~.x %>% mutate(id_event = .y))
+  
+  # collect list of intervals to dataset
+  d_1person = l_data1person %>% bind_rows()
+  d_1person
+}
+
+# running above function for each player
+# for each imputed dataset
+datasets = d_inj_only %>% distinct(d_imp) %>% pull() 
+d_maindata = data.frame()
+for(i in datasets){
+
+    tempdata2 = d_inj_only %>% filter(d_imp == i)  
+    d_1person = data.frame()
+    for(j in ids){
+    tempdata = find_events(tempdata2, j)
+    d_1person = rbind(d_1person, tempdata)
+    d_1person
+    }
+    d_maindata = rbind(d_maindata, d_1person)
+}
+
+# add on the players without any symptoms
+d_time_to_sympt = bind_rows(d_maindata, d_analysis %>% filter(id_player %in% no_inj_players)) %>% 
+                  mutate(id_event = ifelse(id_player %in% no_inj_players, 1, id_event)) %>% 
+                  rename(not_unique_id = id_event) 
+
+d_eventid = d_time_to_sympt %>% 
+      distinct(id_player, not_unique_id) %>% mutate(id_event = 1:n())
+d_time_to_sympt = d_time_to_sympt %>% 
+                  left_join(d_eventid, by = c("id_player", "not_unique_id")) %>% 
+                  select(-not_unique_id)
+
+# find follow up time per symptom episode, per player
+d_time_to_sympt = d_time_to_sympt %>% arrange(d_imp, id_player, date) %>%
+   group_by(d_imp, id_player, id_event) %>%
+   mutate(Fup = n(), day = 1:n()) %>% ungroup()
+```
+
+After finding the injury events, we needed to structure the data in counting process form.
+This was to handle the time-varying jump load variables.
+We also had to structure the Q matrix for the DLNM part of the model.
+This is essentially a matrix with each jump number, for each individual,
+for each day back in time. I've made a couple of functions to make this easier.
+
+```{r functions, warning=FALSE, echo = TRUE, message=FALSE}
+# function to arrange survival data in counting process form
+counting_process_form = function(d_survival_sim){
+  d_follow_up_times = d_survival_sim %>% distinct(Id, Fup)
+  d_surv_lim = map2(.x = d_follow_up_times$Id,
+                    .y = d_follow_up_times$Fup,
+                    ~d_survival_sim %>% filter(Id == .x) %>% slice(.y)) %>% 
+    bind_rows() %>% rename(event = Event, exit = Stop, id = Id)
+  
+  # extracting timepoints in which an event happened
+  ftime = d_surv_lim %>% filter(event == 1) %>% distinct(exit) %>% arrange(exit) %>% pull()
+  
+  # arrange the survival data so that, for each individual, we have an interval of enter and exit times
+  # for each of the exit times above, with the information of whether or not they were injured at that time
+  # meaning we will have the same time intervals per participant
+  d_counting_process = survSplit(Surv(exit, event)~., d_surv_lim, cut = ftime, start="enter") %>% arrange(id)
+  d_counting_process %>% select(-Start, -Fup) %>% tibble() 
+}
+
+# function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
+# and the exposure history spread in wide format in a matrix
+calc_q_matrix = function(d_counting_process, d_tl_hist_wide){
+  # for each individual, for each of these exit times, we will extract the exposure history 
+  # for the given lag-time which we are interested in
+  # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+  q = map2(.x = d_counting_process$id, 
+           .y = d_counting_process$exit, 
+           ~exphist(d_tl_hist_wide[.x,], .y, c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+  q
+}
+```
+
+Now on to using these functions.
+
+```{r crossbasis_frequency, warning=FALSE, echo = TRUE, message=FALSE}
+# first, we extract the variables needed to assess jump frequency
+# this is based on our previously made causal diagram.
+d_confounders_freq = d_time_to_sympt %>% filter(d_imp == 1) %>% 
+  distinct(id_player, date, .keep_all = TRUE) %>% 
+  select(id_player, id_event, day, date, age, jump_height_max, position, 
+         match, t_prevmatch, jumps_n_weekly) %>% 
+  mutate(position  = factor(position),
+         match = factor(match))
+
+# temporary select to reduce the amount of memory during computation
+d_selected = d_time_to_sympt %>% select(d_imp, id_player, id_event, date, jumps_n, inj_knee, day, Fup)
+d_selected = d_selected %>% mutate(inj_knee = ifelse(is.na(inj_knee), 0, inj_knee))
+
+# find start and stop times
+d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
+                              rename(Stop = day, Id = id_event, Event = inj_knee) %>% 
+                              mutate(Start = lag(Stop),
+                                     Start = ifelse(is.na(Start), 0, Start)) %>% ungroup()
+
+l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
+
+# rearrange to counting process form
+l_surv_cpform = l_surv %>% map(~counting_process_form(.) %>% mutate(id = as.numeric(id)))
+l_surv_cpform = l_surv_cpform %>% map(. %>% as_tibble() %>% select(-date, -jumps_n))
+
+# add confounders back to datasets
+l_surv_cpform = l_surv_cpform %>% 
+  map(.  %>% left_join(d_confounders_freq, 
+                       by = c("id_player", "id" = "id_event", "exit" = "day")))
+
+# arrange the exposure history in wide format in a matrix
+l_tl_hist = l_surv %>% map(. %>% select(Id, jumps_n, Stop))
+l_tl_hist_spread_day = 
+  l_tl_hist %>% map(. %>% pivot_wider(names_from = Stop, values_from = jumps_n) %>% 
+                      select(-Id) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat = map2(.x = l_surv_cpform,
+               .y = l_tl_hist_spread_day, 
+               ~calc_q_matrix(.x, .y))
+
+# make the crossbasis
+# with splines with 3 knots
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = 3),
+                                        arglag = list(fun="ns", knots = 3)))
+```
+
+After we've structured our survival data and made the crossbasis, we can run the frailty models themselves.
+
+```{r frailty_frequency_time_to_episode, warning=FALSE, echo = TRUE, message=FALSE}
+library(coxme) # for frailty model
+# no frailty
+l_fit_dlnm_nofrailty = 
+             map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxph(Surv(enter, exit, event) ~ .y + position + age + 
+                           jump_height_max + match + t_prevmatch, data = .x))
+
+# frailty
+# method to manually get the pooled results from coxme: https://github.com/amices/mice/issues/123
+l_fit_dlnm = map2(.x = l_surv_cpform,
+                  .y = l_cb_dlnm,
+                  ~coxme(Surv(enter, exit, event) ~ .y + position + age + 
+                           jump_height_max + match + t_prevmatch + (1 | id), data = .x))
+
+# checking to see if the fraily improves the model
+AIC(l_fit_dlnm_nofrailty[[1]])
+AIC(l_fit_dlnm[[1]])
+```
+
+We made some figures to see what the results would look like. 
+
+```{r figures1, warning=FALSE, echo = TRUE, message=FALSE}
+library(lmisc) # loading local package for figure settings
+# shared figure options
+text_size = 14
+ostrc_theme =  theme(panel.border = element_blank(), 
+                     panel.background = element_blank(),
+                     panel.grid = element_blank(),
+                     axis.line = element_line(color = nih_distinct[4]),
+                     strip.background = element_blank(),
+                     strip.text.x = element_text(size = text_size, 
+                     colour="black", face = "bold", hjust = -0.01),
+                     axis.ticks = element_line(color = nih_distinct[4]),
+                     legend.position = "bottom")
+
+# vector of tl values used in visualizations of predictions
+predvalues = seq(min(d_analysis$jumps_n), max(d_analysis$jumps_n), 10)
+lag_seq = lag_min:lag_max 
+
+# predict hazards
+l_cp_preds_dlnm = 
+  map2(.x = l_fit_dlnm,
+       .y = l_cb_dlnm,
+       ~crosspred(.y, .x, at = predvalues, cen = 0, cumul = TRUE))
+glimpse(l_cp_preds_dlnm)
+
+# function for plucking the right matrix out of the crosspred list within the list of crosspred lists
+pluck_mat = function(x, pos){pluck(l_cp_preds_dlnm, x, pos)}
+# the crosspred list has changed
+allRRfit = 9
+d_preds_cumul1 = pluck_mat(1, allRRfit)
+d_preds_cumul2 = pluck_mat(2, allRRfit)
+d_preds_cumul3 = pluck_mat(3, allRRfit)
+d_preds_cumul4 = pluck_mat(4, allRRfit)
+d_preds_cumul5 = pluck_mat(5, allRRfit)
+l_cumulRRfit = list(d_preds_cumul1, d_preds_cumul2, d_preds_cumul3, d_preds_cumul4, d_preds_cumul5)
+# average across preds
+mat_cumulRRfit = reduce(l_cumulRRfit, `+`) / length(l_cumulRRfit)
+
+# conflow
+allRRfit_low = 15
+d_preds_cumullow1 = pluck_mat(1, allRRfit_low)
+d_preds_cumullow2 = pluck_mat(2, allRRfit_low)
+d_preds_cumullow3 = pluck_mat(3, allRRfit_low)
+d_preds_cumullow4 = pluck_mat(4, allRRfit_low)
+d_preds_cumullow5 = pluck_mat(5, allRRfit_low)
+l_cumulRRfit_low = list(d_preds_cumullow1, d_preds_cumullow2, d_preds_cumullow3, d_preds_cumullow4, d_preds_cumullow5)
+# average across preds
+mat_cumulRRfit_low = reduce(l_cumulRRfit_low, `+`) / length(l_cumulRRfit_low)
+
+# confhigh
+allRRfit_high = 16
+d_preds_cumulhigh1 = pluck_mat(1, allRRfit_high)
+d_preds_cumulhigh2 = pluck_mat(2, allRRfit_high)
+d_preds_cumulhigh3 = pluck_mat(3, allRRfit_high)
+d_preds_cumulhigh4 = pluck_mat(4, allRRfit_high)
+d_preds_cumulhigh5 = pluck_mat(5, allRRfit_high)
+l_cumulRRfit_cumulhigh = list(d_preds_cumulhigh1, d_preds_cumulhigh2, d_preds_cumulhigh3, d_preds_cumulhigh4, d_preds_cumulhigh5)
+# average across preds
+mat_cumulRRfit_high = reduce(l_cumulRRfit_cumulhigh, `+`) / length(l_cumulRRfit_cumulhigh)
+
+d_cumul = as_tibble(mat_cumulRRfit) %>% 
+  mutate(jumps_n = predvalues, ci_low = mat_cumulRRfit_low, ci_high = mat_cumulRRfit_high)
+
+```
+
+```{r}
+ggplot(d_cumul, aes(x = jumps_n, y = value, group = 1)) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  #theme_base(text_size) +
+  ostrc_theme +
+  xlab("N Jumps") +
+  ylab("Cumulative HR on Day 0")
+```
+
+
+```{r figures2, warning=FALSE, echo = TRUE, message=FALSE}
+# 13 is matRRfit
+matRRfit = 7
+d_preds1 = pluck_mat(1, matRRfit)
+d_preds2 = pluck_mat(2, matRRfit)
+d_preds3 = pluck_mat(3, matRRfit)
+d_preds4 = pluck_mat(4, matRRfit)
+d_preds5 = pluck_mat(5, matRRfit)
+l_matRRfit = list(d_preds1, d_preds2, d_preds3, d_preds4, d_preds5)
+# average across preds
+mat_matRRfit = reduce(l_matRRfit, `+`) / length(l_matRRfit)
+
+# conflow
+matRRfit_low = 13
+d_preds_low1 = pluck_mat(1, matRRfit_low)
+d_preds_low2 = pluck_mat(2, matRRfit_low)
+d_preds_low3 = pluck_mat(3, matRRfit_low)
+d_preds_low4 = pluck_mat(4, matRRfit_low)
+d_preds_low5 = pluck_mat(5, matRRfit_low)
+l_matRRfit_low = list(d_preds_low1, d_preds_low2, d_preds_low3, d_preds_low4, d_preds_low5)
+# average across preds
+mat_matRRfit_low = reduce(l_matRRfit_low, `+`) / length(l_matRRfit_low)
+
+# confhigh
+matRRfit_high = 14
+d_preds_high1 = pluck_mat(1, matRRfit_high)
+d_preds_high2 = pluck_mat(2, matRRfit_high)
+d_preds_high3 = pluck_mat(3, matRRfit_high)
+d_preds_high4 = pluck_mat(4, matRRfit_high)
+d_preds_high5 = pluck_mat(5, matRRfit_high)
+l_matRRfit_high = list(d_preds_high1, d_preds_high2, d_preds_high3, d_preds_high4, d_preds_high5)
+# average across preds
+mat_matRRfit_high = reduce(l_matRRfit_high, `+`) / length(l_matRRfit_high)
+
+# lag-response curve for jumps 100
+jumps_fixed = "100"
+rownumber = which(rownames(mat_matRRfit)==jumps_fixed)
+d_preds_per_lag = as_tibble(mat_matRRfit[rownumber,]) %>% 
+  rename(coef = value) %>% 
+  mutate(lag = 0:27,
+         ci_low = mat_matRRfit_low[rownumber,],
+         ci_high = mat_matRRfit_high[rownumber,])
+
+persp(x = predvalues, y = lag_seq, mat_matRRfit, ticktype="detailed",
+      theta=230, ltheta=150, phi=40, lphi=30,
+      ylab="Lag (Days)", zlab="HR", shade=0.75,
+      r=sqrt(3), d=5, cex.axis=1.2, cex.lab=1.2,
+      border=grey(0.2), col = nih_distinct[1],
+      xlab = "N jumps", main = "3D plane of effects")
+```
+
+
+```{r figures3, warning=FALSE, echo = TRUE, message=FALSE}
+# exposure-response curve for lag 0
+lag_fixed = "lag0"
+colnumber = which(colnames(mat_matRRfit) == lag_fixed)
+d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>% 
+  rename(coef = value) %>% 
+  mutate(jumps_n = predvalues,
+         ci_low = mat_matRRfit_low[,colnumber],
+         ci_high = mat_matRRfit_high[,colnumber])
+
+ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  #theme_base(text_size) +
+  ostrc_theme +
+  xlab("N jumps") +
+  ylab("HR on Day 0")
+```
+
+
+```{r figures4, warning=FALSE, echo = TRUE, message=FALSE}
+lag_fixed = "lag15"
+colnumber = which(colnames(mat_matRRfit) == lag_fixed)
+d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>% 
+  rename(coef = value) %>% 
+  mutate(jumps_n = predvalues,
+         ci_low = mat_matRRfit_low[,colnumber],
+         ci_high = mat_matRRfit_high[,colnumber])
+
+ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  #theme_base(text_size) +
+  ostrc_theme +
+  xlab("N jumps") +
+  ylab("HR on Day 15")
+```
+
+
+```{r figures5, warning=FALSE, echo = TRUE, message=FALSE}
+lag_fixed = "lag27"
+colnumber = which(colnames(mat_matRRfit) == lag_fixed)
+d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>% 
+  rename(coef = value) %>% 
+  mutate(jumps_n = predvalues,
+         ci_low = mat_matRRfit_low[,colnumber],
+         ci_high = mat_matRRfit_high[,colnumber])
+
+ggplot(d_preds_per_jump, aes(x = jumps_n, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  #theme_base(text_size) +
+  ostrc_theme +
+  xlab("N jumps") +
+  ylab("HR on Day 27") 
+```
+
+Rod, Chris and Lena had a meeting about the model and the results. 
+We had multiple concerns. One was that long-lasting and severe symptoms were treated 
+equally to less severe, short-lasting symptoms. 
+Would it be more useful to consider,
+if you already have symptoms, what is the risk of getting worse by jumping?
+Or a rehabilitation question: If you have symptoms, 
+how much is too much to increase risk of getting worse (or never getting better?).
+Time to improvement analysis?
+The idea is to include those long stretches of times players are feeling symptoms in the analysis.
+Another option was to involve an ordinal outcome. No symptoms, mild symptoms, substantial symptoms etc.
+Another concern was the interval-censored aspect. Treating the data this way introduces quite a bit of uncertainty. Lena went back to the drawing board. 
+
