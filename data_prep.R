@@ -164,6 +164,47 @@ d_all = d_all %>% left_join(d_ostrc_dates_valid_other, by = c("id_player", "date
 # add preseason variable
 d_all = d_all %>% mutate(preseason = ifelse(season_phase == "Preseason", 1, 0))
 
+# We also want to fill Knee_Total
+d_ostrc_dates = d_all %>% select(all_of(key_cols), Knee_Total) %>% filter(!is.na(Knee_Total))
+d_ostrc_dates = d_ostrc_dates %>% mutate(date_last = date+6)
+
+nested_list = d_ostrc_dates %>% group_by(id_player, id_team, id_team_player, id_season) %>% nest()
+nested_list$data = nested_list$data %>% 
+  map(., ~map2(.x = .$date, .y = .$date_last, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
+nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
+d_ostrc_dates_valid = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
+
+# remove duplicated dates
+# as some OSTRC intervals overlapped
+d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
+  distinct(id_player, id_team, id_team_player, id_season, date)
+
+d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
+  left_join(d_ostrc_dates, by = c("id_player", "id_team", "id_team_player", "id_season", "date")) %>% 
+  fill(Knee_Total, .direction = "down") %>% select(-date_last) %>% rename(knee_total_filled = Knee_Total)
+
+d_all = d_all %>% left_join(d_ostrc_dates_valid, 
+                                      by = c("id_player", "id_team", "id_team_player", "id_season", "date"))
+
+# IF there are two intervals separated by a singled day
+# that is, one OSTRC qustionnaire was answered 1 day late
+# AND the values on both questionnaires were 0 (no symptoms)
+# we will assume that missing day to be a 0
+d_all  = d_all %>% 
+  group_by(id_player) %>% 
+  mutate(missing = is.na(knee_total_filled),
+         missing_lead = lead(is.na(knee_total_filled)),
+         missing_lag = lag(is.na(knee_total_filled)),
+         missing_wedged = ifelse(missing & !missing_lead & !missing_lag, 1, 0),
+         knee_total_filled_lag = lag(knee_total_filled),
+         knee_total_filled_lead = lead(knee_total_filled),
+         wedge_is_0 = ifelse(knee_total_filled_lag == 0 & knee_total_filled_lead == 0, 1, 0),
+         knee_total_filled_orig = knee_total_filled,
+         knee_total_filled = ifelse(missing_wedged == 1 & wedge_is_0 == 1, 0, knee_total_filled)) %>% 
+  ungroup() 
+
+d_all = d_all %>% select(-starts_with("missing"), -wedge_is_0, -ends_with("lag"), -ends_with("lead"))
+  
 # write csv to read in other scripts
 # write .csv
 # write_delim is preferable, but write_excel_csv is required for excel to understand
@@ -172,7 +213,7 @@ d_all = d_all %>% mutate(preseason = ifelse(season_phase == "Preseason", 1, 0))
 
 #---------------------------------------------------exposure data
 d_daily = d_all %>% select(all_of(key_cols), 
-                 starts_with("Knee"), 
+                 starts_with("knee"), 
                  starts_with("Shoulder"), 
                  starts_with("LowBack"), 
                  starts_with("inj"), 
@@ -281,6 +322,20 @@ d_daily_jumps %>% slice(-pos_dates) %>%
                                   prop = n_missing_daily/denom, 
                                   perc = 100*prop)
 
+# find number of missing OSTRC responses
+# and number fixed by imputation of "wedged" days
+d_daily_jumps %>% slice(-pos_dates) %>% 
+  summarise(denom = n(),
+            n_missing_orig = sum(is.na(knee_total_filled_orig)), 
+            n_missing_fixed = sum(is.na(knee_total_filled)),
+            prop_orig = n_missing_orig/denom,
+            prop_fixed = n_missing_fixed/denom,
+            n_diff = n_missing_orig-n_missing_fixed
+  )
+
+# remove the original knee filled variable
+d_daily_jumps = d_daily_jumps %>% select(-knee_total_filled_orig)
+
 # write_excel_csv(d_daily_jumps,
 #                 paste0(data_folder, "d_jump_daily.csv"),
 #                 delim = ";", na = "")
@@ -360,6 +415,7 @@ l_mids_jumpload = mice(d_pre_impute, method = method_impute, pred = pred, m = 5,
 densityplot(l_mids_jumpload, ~jumps_n)
 densityplot(l_mids_jumpload, ~weight)
 densityplot(l_mids_jumpload, ~jump_height_sum)
+
 
 d_mult_imputed = l_mids_jumpload %>% 
                  mice::complete("long") %>% tibble() %>% 
