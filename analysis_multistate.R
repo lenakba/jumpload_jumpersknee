@@ -123,14 +123,15 @@ l_transitions = list(c(2),
                      c(1, 4),
                      c(1, 3))
 transmat = mstate::transMat(l_transitions, statenames) %>% replace_na(0)
-
-
-d_selected %>% count(knee_state)
+transmat_init = crudeinits.msm(knee_state ~ day, id_player, data=d_selected %>% filter(d_imp == 1), qmatrix=transmat)
 
 cav.msm = msm(knee_state ~ day, subject = id_player, data = d_selected %>% filter(d_imp == 1),
-               qmatrix = transmat, control=list(fnscale=5000,maxit=500))
+               qmatrix = transmat_init, control=list(fnscale=5000,maxit=500), method = "BFGS")
 cav.msm
 
+# Tried:
+# covariates = ~ age + t_prevmatch
+# however, got overflow error message
 
 # put states into their own variables
 d_kneelevels = d_kneelevels %>% mutate(asymptomatic = ifelse(knee_state == 0, 1, 0),

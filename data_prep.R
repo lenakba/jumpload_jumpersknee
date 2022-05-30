@@ -190,20 +190,51 @@ d_all = d_all %>% left_join(d_ostrc_dates_valid,
 # that is, one OSTRC qustionnaire was answered 1 day late
 # AND the values on both questionnaires were 0 (no symptoms)
 # we will assume that missing day to be a 0
-d_all  = d_all %>% 
-  group_by(id_player) %>% 
-  mutate(missing = is.na(knee_total_filled),
-         missing_lead = lead(is.na(knee_total_filled)),
-         missing_lag = lag(is.na(knee_total_filled)),
-         missing_wedged = ifelse(missing & !missing_lead & !missing_lag, 1, 0),
-         knee_total_filled_lag = lag(knee_total_filled),
-         knee_total_filled_lead = lead(knee_total_filled),
-         wedge_is_0 = ifelse(knee_total_filled_lag == 0 & knee_total_filled_lead == 0, 1, 0),
-         knee_total_filled_orig = knee_total_filled,
-         knee_total_filled = ifelse(missing_wedged == 1 & wedge_is_0 == 1, 0, knee_total_filled)) %>% 
-  ungroup() 
 
-d_all = d_all %>% select(-starts_with("missing"), -wedge_is_0, -ends_with("lag"), -ends_with("lead"))
+find_missingintervals = function(d, id){
+  
+  # one participant at a time
+  d_start = d %>% filter(id_player == id) %>% select(id_player, date, knee_total_filled)
+  
+  # find consecutive missing
+  d_missing = d_start  %>% 
+    mutate(missing = is.na(knee_total_filled))
+  
+  v_missing = with(rle(d_missing$missing), lengths[values])
+
+  d_missing = d_missing %>% 
+    filter(missing) %>% 
+    mutate(missing_consecutive = 
+             map2(v_missing, v_missing, 
+                  ~rep(.x, .y)) %>% unlist(),
+           missing_wedged = ifelse(missing_consecutive <=4, 1, 0))
+  d_missing
+}
+
+ids = d_all %>% distinct(id_player) %>% pull()
+d_missing = data.frame()
+for(i in ids){
+  tempdata = find_missingintervals(d_all, i)
+  d_missing = rbind(d_missing, tempdata)
+}
+
+# join to find the missing that are wedged between two intervals
+d_all = d_all %>% left_join(d_missing %>% select(-knee_total_filled), by = c("id_player", "date"))
+
+# find missing wedged between two intervals that are the same
+# we can only use this method because there were no missing to the 
+# OSTRC responses AND OSTRC pertains to 7 days every time. 
+# If we look forward/back 4 days
+# even though the missing interval is 1 day, we will still get a correct answer.
+d_all = d_all %>% fill(missing_consecutive) %>% 
+  mutate(knee_total_filled_lag = lag(knee_total_filled, 4),
+         knee_total_filled_lead = lead(knee_total_filled, 4),
+         missing_criteria = ifelse(missing_wedged == 1 &
+                                   knee_total_filled_lag == knee_total_filled_lead, 1, 0),
+         knee_total_filled_orig = knee_total_filled,
+         knee_total_filled = ifelse(missing_criteria == 1, knee_total_filled_lag, knee_total_filled))
+
+d_all = d_all %>% select(-starts_with("missing"), -ends_with("lag"), -ends_with("lead"))
   
 # write csv to read in other scripts
 # write .csv
