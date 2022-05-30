@@ -41,32 +41,7 @@ d_analysis = d_jumpload %>%
 
 d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj"), starts_with("knee")), ~as.numeric(.))
 
-# We start by filling the values 6 days down.
-# find which days the OSTRC-questionnaire actually pertains to
-# since each answer is for the previous 6 days including the current day
-d_ostrc_dates = d_analysis %>% select(d_imp, all_of(key_cols), Knee_Total) %>% filter(!is.na(Knee_Total))
-d_ostrc_dates = d_ostrc_dates %>% mutate(date_last = date+6)
-
-nested_list = d_ostrc_dates %>% group_by(d_imp, id_player, id_team, id_team_player, id_season) %>% nest()
-nested_list$data = nested_list$data %>% 
-  map(., ~map2(.x = .$date, .y = .$date_last, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
-nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
-d_ostrc_dates_valid = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
-
-# remove duplicated dates
-# as some OSTRC intervals overlapped
-d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
-  distinct(d_imp, id_player, id_team, id_team_player, id_season, date)
-
-d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
-  left_join(d_ostrc_dates, by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date")) %>% 
-  fill(Knee_Total, .direction = "down") %>% select(-date_last) %>% rename(knee_total_filled = Knee_Total)
-
-d_analysis = d_analysis %>% left_join(d_ostrc_dates_valid, 
-                            by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date"))
-
 # fixme! find better solution for handling missing responses
-# fixme! maybe assume that 1 NA between two OSTRC intervals of 0 is 0?
 d_analysis = d_analysis %>% mutate(knee_total_filled = ifelse(is.na(knee_total_filled), 0, knee_total_filled),
                                    inj_knee_filled = ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
 
@@ -85,10 +60,10 @@ d_analysis = d_analysis %>% mutate(knee_total_filled = ifelse(is.na(knee_total_f
 d_kneelevels = d_analysis %>% group_by(d_imp, id_player) %>% 
   mutate(knee_total_filled_lag = lag(knee_total_filled),
          knee_total_diff = knee_total_filled - knee_total_filled_lag,
-         change = case_when(Knee_Total >= 1 & knee_total_filled_lag == 0 ~ 1,
-                            knee_total_diff < 0 & Knee_Total != 0 ~ 3,
-                            knee_total_diff > 0 & Knee_Total != 0 ~ 2,
-                            Knee_Total == 0 ~ 0)
+         change = case_when(Knee_Total >= 1 & knee_total_filled_lag == 0 ~ 2,
+                            knee_total_diff < 0 & Knee_Total != 0 ~ 4,
+                            knee_total_diff > 0 & Knee_Total != 0 ~ 3,
+                            Knee_Total == 0 ~ 1)
          ) %>% ungroup()
 
 # these too, have to be filled.
@@ -127,10 +102,10 @@ d_kneelevels = d_kneelevels %>% arrange(d_imp, id_player, date) %>%
 
 
 d_selected = d_kneelevels  %>% 
-  select(d_imp, id_player, date, knee_state, all_of(conf_cols))
+  select(d_imp, id_player, date, knee_state, day, all_of(conf_cols))
 
 # number of transitions from one state to another
-statetable.msm(knee_state, id_player, data = d_selected)
+statetable.msm(knee_state, id_player, data = d_selected %>% filter(d_imp == 1))
 
 
 
@@ -150,9 +125,30 @@ l_transitions = list(c(2),
 transmat = mstate::transMat(l_transitions, statenames) %>% replace_na(0)
 
 
-cav.msm <- msm(state ~ day, subject = id_player, data = d_selected,
-               qmatrix = twoway4.q)
+d_selected %>% count(knee_state)
+
+cav.msm = msm(knee_state ~ day, subject = id_player, data = d_selected %>% filter(d_imp == 1),
+               qmatrix = transmat, control=list(fnscale=5000,maxit=500))
 cav.msm
+
+
+subject = d_selected$id_player
+
+### Check if observations within a subject are adjacent
+subj.num <- match(subject,unique(subject)) # avoid problems with factor subjects with empty levels
+ind <- tapply(seq_along(subj.num), subj.num, length)
+imin <- tapply(seq_along(subj.num), subj.num, min)
+imax <- tapply(seq_along(subj.num), subj.num, max)
+adjacent <- (ind == imax-imin+1)
+if (any (!adjacent)) {
+  badsubjs <- unique(subject)[ !adjacent ]
+  andothers <- if (length(badsubjs)>3) " and others" else ""
+  if (length(badsubjs)>3) badsubjs <- badsubjs[1:3]
+  badlist <- paste(badsubjs, collapse=", ")
+  plural <- if (length(badsubjs)==1) "" else "s"
+  stop ("Observations within subject", plural, " ", badlist, andothers, " are not adjacent in the data")
+}
+
 
 
 # put states into their own variables
