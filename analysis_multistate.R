@@ -132,25 +132,6 @@ cav.msm = msm(knee_state ~ day, subject = id_player, data = d_selected %>% filte
 cav.msm
 
 
-subject = d_selected$id_player
-
-### Check if observations within a subject are adjacent
-subj.num <- match(subject,unique(subject)) # avoid problems with factor subjects with empty levels
-ind <- tapply(seq_along(subj.num), subj.num, length)
-imin <- tapply(seq_along(subj.num), subj.num, min)
-imax <- tapply(seq_along(subj.num), subj.num, max)
-adjacent <- (ind == imax-imin+1)
-if (any (!adjacent)) {
-  badsubjs <- unique(subject)[ !adjacent ]
-  andothers <- if (length(badsubjs)>3) " and others" else ""
-  if (length(badsubjs)>3) badsubjs <- badsubjs[1:3]
-  badlist <- paste(badsubjs, collapse=", ")
-  plural <- if (length(badsubjs)==1) "" else "s"
-  stop ("Observations within subject", plural, " ", badlist, andothers, " are not adjacent in the data")
-}
-
-
-
 # put states into their own variables
 d_kneelevels = d_kneelevels %>% mutate(asymptomatic = ifelse(knee_state == 0, 1, 0),
                                      symptomatic = ifelse(knee_state == 1, 1, 0),
