@@ -13,7 +13,9 @@ d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
 
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
-# d_all = read_delim(paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
+conf_cols = c("age", "jump_height_max", "position", 
+              "match", "t_prevmatch", "jumps_n_weekly", "preseason", "jump_height_sum")
+
 
 # define the min and max lag
 lag_min = 0
@@ -78,15 +80,9 @@ d_analysis = d_analysis %>% mutate(knee_total_filled = ifelse(is.na(knee_total_f
 # we will consider the "worsening" problem
 # we've included improvement, but for statistical power,
 # maybe it should be the same as symptomatic/worse
-statenames = c("asymptomatic", "symptomatic", "worsening", "improvement")
-l_transitions = list(c(2), 
-                     c(1, 3, 4), 
-                     c(1, 4),
-                     c(1, 3))
-transmat = transMat(l_transitions, statenames)
 
 # find positions of change 
-d_kneelevels = d_inj_struct %>% group_by(d_imp, id_player) %>% 
+d_kneelevels = d_analysis %>% group_by(d_imp, id_player) %>% 
   mutate(knee_total_filled_lag = lag(knee_total_filled),
          knee_total_diff = knee_total_filled - knee_total_filled_lag,
          change = case_when(Knee_Total >= 1 & knee_total_filled_lag == 0 ~ 1,
@@ -118,36 +114,45 @@ d_ostrc_dates_valid = d_ostrc_dates_valid %>%
   fill(change, .direction = "down") %>% select(-date_last) %>% rename(knee_state = change)
 
 d_kneelevels = d_kneelevels %>% left_join(d_ostrc_dates_valid, 
-                                      by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date"))
+               by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date"))
 
 
 
-d_kneelevels  %>% 
-  select(d_imp, id_player, Knee_Total, knee_total_filled, knee_state)
-
-
-
-
-
-d_selected %>% group_by(d_imp, id_player) %>% 
-  mutate(knee_total_filled_lag = lag(knee_total_filled),
-         knee_total_diff = knee_total_filled - knee_total_filled_lag) %>% View()
-
-
-
-
-d_selected %>% View()
 
 library(msm)
 # add number of days per individual
-d_kneelevels %>% arrange(d_imp, id_player, date) %>%
+d_kneelevels = d_kneelevels %>% arrange(d_imp, id_player, date) %>%
   group_by(d_imp, id_player) %>%
-  mutate(day = 1:n()) %>% ungroup() %>% 
-  select(d_imp, id_player, id_event, day, knee_state, jumps_n) %>% View()
+  mutate(day = 0:(n()-1)) %>% ungroup() 
+
+
+d_selected = d_kneelevels  %>% 
+  select(d_imp, id_player, date, knee_state, all_of(conf_cols))
+
+# number of transitions from one state to another
+statetable.msm(knee_state, id_player, data = d_selected)
 
 
 
 
+twoway4.q <- rbind(c(0, 0.25, 0, 0.25), c(0.166, 0, 0.166, 0.166),
+                     + c(0, 0.25, 0, 0.25), c(0, 0, 0, 0))
+rownames(twoway4.q) = colnames(twoway4.q) = c("Well", "Mild",
+                                                   "Severe", "Death")
+
+
+
+statenames = c("asymptomatic", "symptomatic", "worsening", "improvement")
+l_transitions = list(c(2), 
+                     c(1, 3, 4), 
+                     c(1, 4),
+                     c(1, 3))
+transmat = mstate::transMat(l_transitions, statenames) %>% replace_na(0)
+
+
+cav.msm <- msm(state ~ day, subject = id_player, data = d_selected,
+               qmatrix = twoway4.q)
+cav.msm
 
 
 # put states into their own variables
