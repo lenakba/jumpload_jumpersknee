@@ -58,7 +58,7 @@ d_selected = d_analysis %>% select(d_imp, id_player, date, time, jumps_n, inj_kn
 l_selected = (d_selected %>% group_by(d_imp) %>% nest())$data
 
 # matrix of exposure histories
-l_q_mat = l_selected %>% map(., ~tsModel::Lag(.$jumps_n, 0:27))
+l_q_mat = l_selected %>% map(., ~tsModel::Lag(.$jumps_n, lag_min:lag_max))
 
 # obtain the crossbasis
 l_cb_dlnm =  l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
