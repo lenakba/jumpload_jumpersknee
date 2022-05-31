@@ -42,8 +42,8 @@ d_analysis = d_jumpload %>%
 d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj"), starts_with("knee")), ~as.numeric(.))
 
 # fixme! find better solution for handling missing responses
-d_analysis = d_analysis %>% mutate(knee_total_filled = ifelse(is.na(knee_total_filled), 0, knee_total_filled),
-                                   inj_knee_filled = ifelse(is.na(inj_knee_filled), 0, inj_knee_filled))
+# d_analysis = d_analysis %>% mutate(knee_total_filled = ifelse(is.na(knee_total_filled), -1, knee_total_filled),
+#                                    inj_knee_filled = ifelse(is.na(inj_knee_filled), -1, inj_knee_filled))
 
 # We will find the change state of each OSTRC questionnaire.
 
@@ -61,8 +61,9 @@ d_kneelevels = d_analysis %>% group_by(d_imp, id_player) %>%
   mutate(knee_total_filled_lag = lag(knee_total_filled),
          knee_total_diff = knee_total_filled - knee_total_filled_lag,
          change = case_when(Knee_Total >= 1 & knee_total_filled_lag == 0 ~ 2,
-                            knee_total_diff < 0 & Knee_Total != 0 ~ 3,
-                            knee_total_diff > 0 & Knee_Total != 0 ~ 2,
+                            Knee_Total >= 1 & is.na(knee_total_filled_lag) ~ 2,
+                            knee_total_diff < 0 & Knee_Total != 0 ~ 2,
+                            knee_total_diff > 0 & Knee_Total != 0 ~ 3,
                             Knee_Total == 0 ~ 1)
          ) %>% ungroup()
 
@@ -90,6 +91,15 @@ d_ostrc_dates_valid = d_ostrc_dates_valid %>%
 
 d_kneelevels = d_kneelevels %>% left_join(d_ostrc_dates_valid, 
                by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date"))
+
+d_kneelevels %>% 
+  filter(d_imp == 1) %>% 
+  select(id_player, knee_total_filled, change, knee_state) %>% 
+  mutate(knee_state = case_when(is.na(knee_state) & knee_total_filled == 0 ~ 1,
+                                is.na(knee_state) & knee_total_filled > 0 ~ 2,
+                                TRUE ~ knee_state)
+         ) %>% View()
+
 
 library(msm)
 # add number of days per individual
@@ -125,6 +135,13 @@ l_transitions = list(c(2),
                      c(1, 2))
 transmat = mstate::transMat(l_transitions, statenames) %>% replace_na(0)
 transmat_init = crudeinits.msm(knee_state ~ day, id_player, data=d_selected %>% filter(d_imp == 1), qmatrix=transmat)
+
+
+cav.msm = msm(knee_state ~ day, subject = id_player, data = d_selected %>% filter(d_imp == 1),
+              qmatrix = transmat_init, control=list(fnscale=5000,maxit=500), method = "BFGS",
+              covariates = ~ position + age + 
+                jump_height_max + match + t_prevmatch)
+cav.msm
 
 
 
