@@ -91,9 +91,6 @@ d_ostrc_dates_valid = d_ostrc_dates_valid %>%
 d_kneelevels = d_kneelevels %>% left_join(d_ostrc_dates_valid, 
                by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date"))
 
-
-
-
 library(msm)
 # add number of days per individual
 d_kneelevels = d_kneelevels %>% arrange(d_imp, id_player, date) %>%
@@ -102,18 +99,21 @@ d_kneelevels = d_kneelevels %>% arrange(d_imp, id_player, date) %>%
 
 
 d_selected = d_kneelevels  %>% 
-  select(d_imp, id_player, date, knee_state, day, all_of(conf_cols))
+  select(d_imp, id_player, date, knee_state, day, jumps_n, all_of(conf_cols))
 
 # number of transitions from one state to another
 statetable.msm(knee_state, id_player, data = d_selected %>% filter(d_imp == 1))
 
+l_selected = (d_selected %>% group_by(d_imp) %>% nest())$data
 
+# matrix of exposure histories
+l_q_mat = l_selected %>% map(., ~tsModel::Lag(.$jumps_n, lag_min:lag_max))
 
-
-twoway4.q <- rbind(c(0, 0.25, 0, 0.25), c(0.166, 0, 0.166, 0.166),
-                     + c(0, 0.25, 0, 0.25), c(0, 0, 0, 0))
-rownames(twoway4.q) = colnames(twoway4.q) = c("Well", "Mild",
-                                                   "Severe", "Death")
+# obtain the crossbasis
+# since data har heavily skewed, we will subjectively specify location of knots
+l_cb_dlnm =  l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
+                                         argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                         arglag = list(fun="ns", knots = 3)))
 
 
 # intitially we had 4 states (one was "improvement")
@@ -126,66 +126,15 @@ l_transitions = list(c(2),
 transmat = mstate::transMat(l_transitions, statenames) %>% replace_na(0)
 transmat_init = crudeinits.msm(knee_state ~ day, id_player, data=d_selected %>% filter(d_imp == 1), qmatrix=transmat)
 
+
+
+# the msm package did not work, because it could not handle the DLNM matrix
+# and we can't reshape to the counting process form
+# we will try the flexsurvreg package instead
 cav.msm = msm(knee_state ~ day, subject = id_player, data = d_selected %>% filter(d_imp == 1),
                qmatrix = transmat_init, control=list(fnscale=5000,maxit=500), method = "BFGS",
-              covariates = ~ position + age + 
+              covariates = ~ l_cb_dlnm[[1]] + position + age + 
                 jump_height_max + match + t_prevmatch)
 cav.msm
 
-# Tried:
-# covariates = ~ age + t_prevmatch
-# however, got overflow error message
 
-# put states into their own variables
-d_kneelevels = d_kneelevels %>% mutate(asymptomatic = ifelse(knee_state == 0, 1, 0),
-                                     symptomatic = ifelse(knee_state == 1, 1, 0),
-                                     worse = ifelse(knee_state == 2, 1, 0),
-                                     better = ifelse(knee_state == 3, 1, 0))
-
-
-
-
-
-
-# add number of days of follow up per event
-d_kneelevels = d_kneelevels %>% arrange(d_imp, id_player, date) %>%
-  group_by(d_imp, id_player, id_event) %>%
-  mutate(Fup = n(), day = 1:n()) %>% ungroup()
-
-msprep(data = d_kneelevels, trans = tmat, 
-       time = c(NA, "rec", "ae","recae", "rel", "srv"), 
-       status = c(NA, "rec.s", "ae.s", "recae.s", "rel.s", "srv.s"), 
-       keep = c("match", "proph", "year", "agecl"))
-
-msprep(data = d_kneelevels, trans = transmat, 
-       time = c(NA, rep("day", 4)), 
-       status = c(NA, "asymptomatic", "symptomatic", "worse", "better"), 
-       keep = c(key_cols, "jumps_n"))
-
-
-n_trans = max(transmat, na.rm = TRUE)
-trans_vec = 1:n_trans
-
-trans_vec %>% map(.x = ., ~flexsurvreg(Surv(enter, exit, event) ~ load,
-                                       data = subset(d_u19_cpform, event == .x),
-                                       dist = "weibull"))
-
-#--------------------------------Try again using msprep instead of SurvSplit
-
-
-library(mstate)
-# simple overuse injury transition matrix
-transitions_u19 = list(c(2, 3), 
-                       c(3, 4), 
-                       c(4),
-                       c())
-
-statenames_u19 = c("healthy", "overuse", "acute", "asymptomatic")
-transmat_u19 = transMat(transitions_u19, statenames_u19)
-
-
-# put states into their own variables
-d_u19_states_temp = d_u19 %>% mutate(overuse = ifelse(injury == 1 & overuse == 2, 1, 0),
-                                     acute = ifelse(injury == 1 & substantial == 0 & overuse == 1, 1, 0),
-                                     acute_subst = ifelse(injury == 1 & substantial == 1 & overuse == 1, 1, 0)) %>% 
-  select(p_id, date_training, load, overuse, acute, acute_subst, injury)
