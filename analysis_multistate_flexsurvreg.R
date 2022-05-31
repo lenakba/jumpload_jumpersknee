@@ -105,13 +105,14 @@ d_selected = d_kneelevels  %>%
 
 # we will find each event interval and give it an ID.
 # this so we can find the follow up time per event
-d_selected %>% filter(d_imp == 1) %>% 
-  select(id_player, date, knee_state) %>% 
+d_selected = d_selected %>% 
   mutate(diff_prev = knee_state-lag(knee_state),
          change_missing = ifelse(!is.na(knee_state) & is.na(diff_prev), 1, 0),
          change = ifelse(diff_prev != 0 | change_missing == 1, 1, 0),
-         change = ifelse(is.na(change), 0, change)) %>% View()
-
+         change = ifelse(is.na(change), 0, change)) %>% 
+  group_by(d_imp, id_player) %>% 
+  mutate(day = 0:(n()-1),
+         Fup = ifelse(change == 1, day, NA)) %>% fill(Fup, .direction = "up") %>% ungroup()
 
 
 
