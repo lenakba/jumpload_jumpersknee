@@ -61,8 +61,8 @@ d_kneelevels = d_analysis %>% group_by(d_imp, id_player) %>%
   mutate(knee_total_filled_lag = lag(knee_total_filled),
          knee_total_diff = knee_total_filled - knee_total_filled_lag,
          change = case_when(Knee_Total >= 1 & knee_total_filled_lag == 0 ~ 2,
-                            knee_total_diff < 0 & Knee_Total != 0 ~ 4,
-                            knee_total_diff > 0 & Knee_Total != 0 ~ 3,
+                            knee_total_diff < 0 & Knee_Total != 0 ~ 3,
+                            knee_total_diff > 0 & Knee_Total != 0 ~ 2,
                             Knee_Total == 0 ~ 1)
          ) %>% ungroup()
 
@@ -116,17 +116,20 @@ rownames(twoway4.q) = colnames(twoway4.q) = c("Well", "Mild",
                                                    "Severe", "Death")
 
 
-
-statenames = c("asymptomatic", "symptomatic", "worsening", "improvement")
+# intitially we had 4 states (one was "improvement")
+# however, we struggled with convergence. 
+# we therefore reduced to studying only 3 states. 
+statenames = c("asymptomatic", "symptomatic", "worsening")
 l_transitions = list(c(2), 
-                     c(1, 3, 4), 
-                     c(1, 4),
-                     c(1, 3))
+                     c(1, 3), 
+                     c(1, 2))
 transmat = mstate::transMat(l_transitions, statenames) %>% replace_na(0)
 transmat_init = crudeinits.msm(knee_state ~ day, id_player, data=d_selected %>% filter(d_imp == 1), qmatrix=transmat)
 
 cav.msm = msm(knee_state ~ day, subject = id_player, data = d_selected %>% filter(d_imp == 1),
-               qmatrix = transmat_init, control=list(fnscale=5000,maxit=500), method = "BFGS")
+               qmatrix = transmat_init, control=list(fnscale=5000,maxit=500), method = "BFGS",
+              covariates = ~ position + age + 
+                jump_height_max + match + t_prevmatch)
 cav.msm
 
 # Tried:
