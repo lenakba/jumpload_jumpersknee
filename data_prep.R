@@ -226,16 +226,22 @@ d_all = d_all %>% left_join(d_missing %>% select(-knee_total_filled), by = c("id
 # OSTRC responses AND OSTRC pertains to 7 days every time. 
 # If we look forward/back 4 days
 # even though the missing interval is 1 day, we will still get a correct answer.
-d_all = d_all %>% fill(missing_consecutive) %>% 
+d_test = d_all %>% fill(missing_consecutive) %>% 
   mutate(knee_total_filled_lag = lag(knee_total_filled, 4),
          knee_total_filled_lead = lead(knee_total_filled, 4),
-         missing_criteria = ifelse(missing_wedged == 1 &
-                                   knee_total_filled_lag == knee_total_filled_lead, 1, 0),
+         missing_criteria = case_when(missing_wedged == 1 &
+                                   knee_total_filled_lag == knee_total_filled_lead~ 1,
+                                   is.na(missing_wedged) ~ 0),
          knee_total_filled_orig = knee_total_filled,
-         knee_total_filled = ifelse(missing_criteria == 1, knee_total_filled_lag, knee_total_filled))
+         knee_total_filled = ifelse(missing_criteria == 1, knee_total_filled_lag, knee_total_filled_orig))
+
+d_test %>% select(id_player, missing_criteria, knee_total_filled_orig, knee_total_filled)
 
 d_all = d_all %>% select(-starts_with("missing"), -ends_with("lag"), -ends_with("lead"))
   
+
+d_all %>% summarise(sum(is.na(knee_total_filled)))
+
 # write csv to read in other scripts
 # write .csv
 # write_delim is preferable, but write_excel_csv is required for excel to understand
