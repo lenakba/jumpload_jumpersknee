@@ -92,15 +92,12 @@ d_ostrc_dates_valid = d_ostrc_dates_valid %>%
 d_kneelevels = d_kneelevels %>% left_join(d_ostrc_dates_valid, 
                by = c("d_imp", "id_player", "id_team", "id_team_player", "id_season", "date"))
 
-d_kneelevels %>% 
-  filter(d_imp == 1) %>% 
-  select(id_player, knee_total_filled, change, knee_state) %>% 
+d_kneelevels = d_kneelevels %>% 
+  group_by(d_imp) %>% 
   mutate(knee_state = case_when(is.na(knee_state) & knee_total_filled == 0 ~ 1,
                                 is.na(knee_state) & knee_total_filled > 0 ~ 2,
                                 TRUE ~ knee_state)
-         ) %>% View()
-
-
+         ) %>% ungroup()
 library(msm)
 # add number of days per individual
 d_kneelevels = d_kneelevels %>% arrange(d_imp, id_player, date) %>%
