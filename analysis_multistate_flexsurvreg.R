@@ -146,14 +146,14 @@ d_surv = d_surv %>%
   select(d_imp, id_player, date, start, stop, knee_state, Fup, jumps_n) 
 
 # fixme! better missing solution.
-d_test1 = d_surv %>% group_by(d_imp, id_player) %>% fill(knee_state, .direction = "downup") %>% ungroup()
-d_test2 = d_test1 %>% mutate(from = lag(knee_state))
+d_filled = d_surv %>% group_by(d_imp, id_player) %>% fill(knee_state, .direction = "downup") %>% ungroup()
+d_filled = d_filled %>% mutate(from = lag(knee_state))
 
 # find transitions and put them into long format
 # not that since state 1 can only go to 2,
 # state 2 can only go to 1 and 3 etc.
 # we have to do this for each "from" state separately
-d_from1 = d_test2  %>% 
+d_from1 = d_filled  %>% 
   filter(from == 1) %>% 
   group_by(d_imp, id_player) %>% 
                   mutate(to = 2,
@@ -161,7 +161,7 @@ d_from1 = d_test2  %>%
                          status = ifelse(knee_state == 2, 1, 0),
                          status = ifelse(is.na(status), 0, status))
 
-d_from2 = d_test2  %>% 
+d_from2 = d_filled  %>% 
   filter(from == 2) %>% 
   group_by(d_imp, id_player) %>% 
   mutate(trans2 = ifelse(knee_state == 1, 1, 0),
@@ -173,7 +173,7 @@ d_from2 = d_test2  %>%
          to = ifelse(trans == 2, 1, 3))
 
 
-d_from3 = d_test2  %>% 
+d_from3 = d_filled  %>% 
   filter(from == 3) %>% 
   group_by(d_imp, id_player) %>% 
   mutate(trans4 = ifelse(knee_state == 1, 1, 0),
@@ -186,19 +186,22 @@ d_from3 = d_test2  %>%
 
 # bind data
 # congratulations, they are now ready for analysis
-d_test3 = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
+d_multistate = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
 
 
 library(flexsurv)
 flexsurvreg(Surv(start, stop, status) ~ 1, subset=(trans==1),
-            data = d_test3 %>% filter(d_imp == 1), dist = "exp")
+            data = d_multistate %>% filter(d_imp == 1), dist = "exp")
 
 flexsurvreg(Surv(start, stop, status) ~ jumps_n, subset=(trans==2),
-            data = d_test3 %>% filter(d_imp == 1), dist = "exp")
+            data = d_multistate %>% filter(d_imp == 1), dist = "exp")
+
+#l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
+
 
 # for all states at a time
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
 trans_vec %>% map(.x = ., ~flexsurvreg(Surv(start, stop, status) ~ jumps_n,
-                                       data = subset(d_test3, trans == .x),
+                                       data = subset(d_multistate, trans == .x),
                                        dist = "exp"))
