@@ -110,6 +110,14 @@ d_selected = d_kneelevels  %>%
 # and cannot handle circular transition matrices
 # we will therefore structure our data MANUALLY. 
 # (yes, I died a little inside)
+
+# To analyze the transitions, we need to have have the event vs. censored status
+# for each possible transition 
+# for each observed timepoint
+# for each individual
+# for each imputed dataset
+# since we have a time-varying covariate that changes evey day (every timepoint)
+# we must have this for every day.
 statenames = c("asymptomatic", "symptomatic", "worse")
 l_transitions = list(c(2), 
                      c(1, 3), 
@@ -195,7 +203,6 @@ d_multistate1 = d_multistate %>% filter(d_imp == 1)
 crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
 mrcox1 = msfit(crcox1, trans = transmat)
 plot(mrcox1)
-
 
 # add the regular covariates
 crcox2 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
