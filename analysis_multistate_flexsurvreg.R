@@ -2,6 +2,7 @@ library(tidyverse) # data wrangling
 library(dlnm) # distributed lag non-linear models
 library(survival)
 library(lubridate) # to manipulate dates
+library(mstate) # for fitting multistate models
 
 # so we don't have to deal with scientific notations
 # and strings aren't automatically read as factors:
@@ -143,7 +144,7 @@ d_surv = d_selected %>% group_by(d_imp, id_player) %>%
 
 # select again for easier analysis
 d_surv = d_surv %>% 
-  select(d_imp, id_player, date, start, stop, knee_state, Fup, jumps_n) 
+  select(d_imp, id_player, date, start, stop, knee_state, Fup, jumps_n, all_of(conf_cols)) 
 
 # fixme! better missing solution.
 d_filled = d_surv %>% group_by(d_imp, id_player) %>% fill(knee_state, .direction = "downup") %>% ungroup()
@@ -187,21 +188,70 @@ d_from3 = d_filled  %>%
 # bind data
 # congratulations, they are now ready for analysis
 d_multistate = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
+l_multistate = (d_multistate %>% group_by(d_imp) %>% nest())$data
+d_multistate1 = d_multistate %>% filter(d_imp == 1)
+
+# performing a regular Cox model (intercept only)
+crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
+mrcox1 = msfit(crcox1, trans = transmat)
+plot(mrcox1)
 
 
-library(flexsurv)
-flexsurvreg(Surv(start, stop, status) ~ 1, subset=(trans==1),
-            data = d_multistate %>% filter(d_imp == 1), dist = "exp")
+# add the regular covariates
+crcox2 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
+                jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 
-flexsurvreg(Surv(start, stop, status) ~ jumps_n, subset=(trans==2),
-            data = d_multistate %>% filter(d_imp == 1), dist = "exp")
-
-#l_surv = (d_surv %>% group_by(d_imp) %>% nest())$data
-
+# predicted values
+n_trans = max(transmat, na.rm = TRUE)
+trans_vec = 1:n_trans
+d_preddate =  tibble(
+  strata = trans_vec,
+  age = rep(30, 5),
+  jump_height_max = rep(86, 5),
+  match = as.factor(rep(0, 5)),
+  p_id = rep(1, 5),
+  position = rep("Setter", 5),
+  t_prevmatch = rep(6, 5)
+)
+mrcox2 = msfit(crcox2, newdata = d_preddate, trans = transmat)
+plot(mrcox2)
 
 # for all states at a time
+# but only 1 imputed dataset
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
 trans_vec %>% map(.x = ., ~flexsurvreg(Surv(start, stop, status) ~ jumps_n,
-                                       data = subset(d_multistate, trans == .x),
+                                       data = subset(d_multistate1, trans == .x),
                                        dist = "exp"))
+
+# 1 list per transition
+# l_multistate %>% map(.x = ., ~flexsurvreg(Surv(start, stop, status) ~ jumps_n,
+#                                        data = subset(d_multistate, trans == 1),
+#                                        dist = "exp"))
+
+# flexsurv have royston parmar models if we are worried about proportional hazards
+library(flexsurv)
+flexsurv1 = flexsurvreg(Surv(start, stop, status) ~ 1, subset=(trans==1),
+            data = d_multistate1, dist = "exp")
+
+flexsurv2 = flexsurvreg(Surv(start, stop, status) ~ position + age + 
+              jump_height_max + match + t_prevmatch, subset=(trans==1),
+            data = d_multistate1, dist = "exp")
+flexsurv2.res <- flexsurv2$res
+flexsurv2.wald <- flexsurv2.res[,1]/flexsurv2.res[,4]
+flexsurv2.p <- 2*pnorm(-abs(flexsurv2.wald))
+
+options(scipen = 30)
+enframe(flexsurv2.p)
+
+# Cox looks like it has a better fit
+flex_exp = flexsurvreg(Surv(start, stop, status) ~ trans,
+                        data = d_multistate1, dist = "exp")
+flex_wei = flexsurvreg(Surv(start, stop, status) ~ trans,
+                       data = d_multistate1, dist = "weibull")
+AIC(crcox1)
+# predtimes
+pred_times = seq(1, 300, by = 10)
+mrexp = msfit.flexsurvreg(flex_exp, t = pred_times, trans = transmat)
+
+plot(mrexp)
