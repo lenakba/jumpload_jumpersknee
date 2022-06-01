@@ -347,7 +347,8 @@ l_tl_hist_spread_day =
                       select(-id_player) %>% as.matrix)
 
 
-calc_q_matrix(l_transitions[[1]], l_tl_hist_spread_day[[1]], l_transitions[[1]]$id_player, l_transitions[[1]]$stop)
+calc_q_matrix(l_transitions[[1]], l_tl_hist_spread_day[[1]], 
+              l_transitions[[1]]$id_player, l_transitions[[1]]$stop)
 
 # calc Q matrices
 l_q_mat = map2(.x = l_transitions,
