@@ -131,51 +131,74 @@ d_surv = d_surv %>%
 
 
 
+
+statenames = c("asymptomatic", "symptomatic", "worsening")
+l_transitions = list(c(2), 
+                     c(1, 3), 
+                     c(1, 2))
+transmat = mstate::transMat(l_transitions, statenames)
+# from 1 to 2 is transition 1
+# from 2 to 1 is transition 2
+# from 2 to 3 is transition 3
+# from 3 to 1 is transition 4
+# from 3 to 2 is transition 5
+
 # fixme! better missing solution.
 d_test1 = d_surv %>% group_by(id_player) %>% fill(knee_state, .direction = "downup") %>% ungroup()
-
-
 d_test2 = d_test1 %>% mutate(from = lag(knee_state))
 
 
 d_from1 = d_test2  %>% 
   filter(from == 1) %>% 
   group_by(d_imp, id_player) %>% 
-                  mutate(to = as.character(2),
+                  mutate(to = 2,
+                         trans = as.character(1),
                          status = ifelse(knee_state == 2, 1, 0),
                          status = ifelse(is.na(status), 0, status))
 
 d_from2 = d_test2  %>% 
   filter(from == 2) %>% 
   group_by(d_imp, id_player) %>% 
-  mutate(status1 = ifelse(knee_state == 1, 1, 0),
-         status1 = ifelse(is.na(status1), 0, status1),
-         status3 = ifelse(knee_state == 3, 1, 0),
-         status3 = ifelse(is.na(status3), 0, status3)) %>% ungroup() %>% 
- pivot_longer(cols = c("status1", "status3"), names_to = "to", values_to = "status") %>% 
-  mutate(to = str_replace_all(to, "status", ""))
+  mutate(trans2 = ifelse(knee_state == 1, 1, 0),
+         trans2 = ifelse(is.na(trans2), 0, trans2),
+         trans3 = ifelse(knee_state == 3, 1, 0),
+         trans3 = ifelse(is.na(trans3), 0, trans3)) %>% ungroup() %>% 
+ pivot_longer(cols = c("trans2", "trans3"), names_to = "trans", values_to = "status") %>% 
+  mutate(trans = str_replace_all(trans, "trans", ""),
+         to = ifelse(trans == 2, 1, 3))
 
 
 d_from3 = d_test2  %>% 
   filter(from == 3) %>% 
   group_by(d_imp, id_player) %>% 
-  mutate(status1 = ifelse(knee_state == 1, 1, 0),
-         status1 = ifelse(is.na(status1), 0, status1),
-         status2 = ifelse(knee_state == 2, 1, 0),
-         status2 = ifelse(is.na(status2), 0, status2)) %>% ungroup() %>% 
-  pivot_longer(cols = c("status1", "status2"), names_to = "to", values_to = "status") %>% 
-  mutate(to = str_replace_all(to, "status", ""))
+  mutate(trans4 = ifelse(knee_state == 1, 1, 0),
+         trans4 = ifelse(is.na(trans4), 0, trans4),
+         trans5 = ifelse(knee_state == 2, 1, 0),
+         trans5 = ifelse(is.na(trans5), 0, trans5)) %>% ungroup() %>% 
+  pivot_longer(cols = c("trans4", "trans5"), names_to = "trans", values_to = "status") %>% 
+  mutate(trans = str_replace_all(trans, "trans", ""),
+         to = ifelse(trans == 4, 1, 2))
 
 # data in multstate format
 d_test3 = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
 
 
 library(flexsurv)
-statenames = c("asymptomatic", "symptomatic", "worsening")
-l_transitions = list(c(2), 
-                     c(1, 3), 
-                     c(1, 2))
-transmat = mstate::transMat(l_transitions, statenames)
+
+
+
+
+flexsurvreg(Surv(start, stop, status) ~ 1, subset=(to==1),
+            data = d_test3 %>% filter(d_imp == 1), dist = "exp")
+
+flexsurvreg(Surv(start, stop, status) ~ jumps_n, subset=(to==1),
+            data = d_test3 %>% filter(d_imp == 1), dist = "exp")
+
+
+flexsurvreg(Surv(start, stop, status) ~ jumps_n,
+            data = subset(d_test3 %>% filter(d_imp == 1), status == 1),
+            dist = "exp")
+
 
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
