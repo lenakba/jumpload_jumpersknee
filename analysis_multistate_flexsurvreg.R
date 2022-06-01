@@ -203,11 +203,11 @@ d_multistate1 = d_multistate %>% filter(d_imp == 1)
 crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
 mrcox1 = msfit(crcox1, trans = transmat)
 plot(mrcox1)
-
+AIC(crcox1)
 # add the regular covariates
 crcox2 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
-
+AIC(crcox2)
 # predicted values
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
@@ -223,18 +223,8 @@ d_preddate =  tibble(
 mrcox2 = msfit(crcox2, newdata = d_preddate, trans = transmat)
 plot(mrcox2)
 
-# for all states at a time
-# but only 1 imputed dataset
-n_trans = max(transmat, na.rm = TRUE)
-trans_vec = 1:n_trans
-trans_vec %>% map(.x = ., ~flexsurvreg(Surv(start, stop, status) ~ jumps_n,
-                                       data = subset(d_multistate1, trans == .x),
-                                       dist = "exp"))
-
-# 1 list per transition
-# l_multistate %>% map(.x = ., ~flexsurvreg(Surv(start, stop, status) ~ jumps_n,
-#                                        data = subset(d_multistate, trans == 1),
-#                                        dist = "exp"))
+# the cox.zph tests proportional hazards per covariate
+cox.zph(crcox2)
 
 # flexsurv have royston parmar models if we are worried about proportional hazards
 library(flexsurv)
@@ -244,6 +234,8 @@ flexsurv1 = flexsurvreg(Surv(start, stop, status) ~ 1, subset=(trans==1),
 flexsurv2 = flexsurvreg(Surv(start, stop, status) ~ position + age + 
               jump_height_max + match + t_prevmatch, subset=(trans==1),
             data = d_multistate1, dist = "exp")
+
+# to obtain p-values
 flexsurv2.res <- flexsurv2$res
 flexsurv2.wald <- flexsurv2.res[,1]/flexsurv2.res[,4]
 flexsurv2.p <- 2*pnorm(-abs(flexsurv2.wald))
