@@ -106,7 +106,7 @@ d_selected = d_kneelevels  %>%
 # prep it into counting process form. However, because we have a time-varying covariate
 # that changes every day, we cannot do so.
 # mstate::msprep is also an alternative, if the data is in wide format. However, the
-# mstate package assumes survival data with an intiial state and an absorbing state,
+# mstate package assumes survival data with an initial state and an absorbing state,
 # and cannot handle circular transition matrices
 # we will therefore structure our data MANUALLY. 
 # (yes, I died a little inside)
@@ -158,6 +158,83 @@ d_surv = d_surv %>%
 d_filled = d_surv %>% group_by(d_imp, id_player) %>% fill(knee_state, .direction = "downup") %>% ungroup()
 d_filled = d_filled %>% mutate(from = lag(knee_state))
 
+# function to find event intervals and append them to a dataset
+find_events = function(d, id){
+  d1 = d %>% filter(id_player == id)
+  
+  # find intervals
+  pos_symptoms = which(d1$status == 1)
+  big_skips = lead(pos_symptoms)-pos_symptoms
+  pos_from = which(big_skips>1)
+  
+  from_after_first = pos_symptoms[pos_from]+1
+  to_after_first = pos_symptoms[pos_from+1]
+  # append to the first extraction
+  from_rows = c(1, from_after_first)
+  to_rows = c(pos_symptoms[1], to_after_first)
+  
+  # if player ends without sympts, needs to be included
+  if((d1 %>% nrow()) > last(pos_symptoms)){
+    from = last(pos_symptoms) + 1
+    end = d1 %>% nrow()
+    from_rows = c(from_rows, from)
+    to_rows = c(to_rows, end)
+  }
+  
+  # slice number of times equal to number of intervals
+  l1mann = replicate(length(from_rows), d1, simplify = FALSE)
+  l_data1person = pmap(list(as.list(from_rows), as.list(to_rows), l1mann), 
+                       function(x, y, z) slice(z, x:y))
+  event_ids = 1:length(l_data1person)
+  l_data1person = map2(l_data1person, event_ids, ~.x %>% mutate(id_event = .y))
+  
+  # collect list of intervals to dataset
+  d_1person = l_data1person %>% bind_rows()
+  d_1person
+}
+
+# function for adding event ids too all datasets in
+# a multiply imputed dataset
+add_event_id = function(d, status){
+  # Find the Q matrix for just transition 1
+  
+  no_inj_players = d %>% group_by(id_player) %>% summarise(sum = sum(status)) %>% 
+    ungroup %>% filter(sum == 0) %>% pull(id_player)
+  
+  # fetch those with injuries
+  d_inj_only = d %>% filter(!id_player %in% no_inj_players)
+  ids = d_inj_only %>% distinct(id_player) %>% pull()
+  
+  
+  # running above function for each player
+  # for each imputed dataset
+  datasets = d_inj_only %>% distinct(d_imp) %>% pull() 
+  d_maindata = data.frame()
+  for(i in datasets){
+    
+    tempdata2 = d_inj_only %>% filter(d_imp == i)  
+    d_1person = data.frame()
+    for(j in ids){
+      tempdata = find_events(tempdata2, j)
+      d_1person = rbind(d_1person, tempdata)
+      d_1person
+    }
+    d_maindata = rbind(d_maindata, d_1person)
+  }
+  
+  # add on the players without any symptoms
+  d_time_to_sympt = bind_rows(d_maindata, d %>% filter(id_player %in% no_inj_players)) %>% 
+    mutate(id_event = ifelse(id_player %in% no_inj_players, 1, id_event)) %>% 
+    rename(not_unique_id = id_event) 
+  
+  d_eventid = d_time_to_sympt %>% 
+    distinct(id_player, not_unique_id) %>% mutate(id_event = 1:n())
+  d_time_to_sympt = d_time_to_sympt %>% 
+    left_join(d_eventid, by = c("id_player", "not_unique_id")) %>% 
+    select(-not_unique_id)
+  d_time_to_sympt
+}
+
 # find transitions and put them into long format
 # not that since state 1 can only go to 2,
 # state 2 can only go to 1 and 3 etc.
@@ -168,8 +245,9 @@ d_from1 = d_filled  %>%
                   mutate(to = 2,
                          trans = as.character(1),
                          status = ifelse(knee_state == 2, 1, 0),
-                         status = ifelse(is.na(status), 0, status)) %>% 
-  ungroup()
+                         status = ifelse(is.na(status), 0, status),
+                         id_state = 1) %>% 
+  ungroup() %>% add_event_id(status)
 
 d_from2 = d_filled  %>% 
   filter(from == 2) %>% 
@@ -180,7 +258,11 @@ d_from2 = d_filled  %>%
          trans3 = ifelse(is.na(trans3), 0, trans3)) %>% ungroup() %>% 
  pivot_longer(cols = c("trans2", "trans3"), names_to = "trans", values_to = "status") %>% 
   mutate(trans = str_replace_all(trans, "trans", ""),
-         to = ifelse(trans == 2, 1, 3))
+         to = ifelse(trans == 2, 1, 3),
+         id_state = ifelse(to == 1, 2, 3))
+
+d_from2 = bind_rows(d_from2 %>% filter(id_state == 2) %>% add_event_id(status),
+d_from2 %>% filter(id_state == 3) %>% add_event_id(status))
 
 
 d_from3 = d_filled  %>% 
@@ -192,23 +274,68 @@ d_from3 = d_filled  %>%
          trans5 = ifelse(is.na(trans5), 0, trans5)) %>% ungroup() %>% 
   pivot_longer(cols = c("trans4", "trans5"), names_to = "trans", values_to = "status") %>% 
   mutate(trans = str_replace_all(trans, "trans", ""),
-         to = ifelse(trans == 4, 1, 2))
+         to = ifelse(trans == 4, 1, 2),
+         id_state = ifelse(to == 1, 4, 5))
+
+d_from3 = bind_rows(d_from3 %>% filter(id_state == 4) %>% add_event_id(status),
+                    d_from3 %>% filter(id_state == 5) %>% add_event_id(status))
 
 # bind data
 # congratulations, they are now ready for analysis
 d_multistate = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
+# add combined id for dlnm
+# it should identify each player
+# each event per player
+# the state the player is currently in
+# the event of interest (per state the player can transition to)
+d_multistate = d_multistate %>% mutate(id_dlnm = paste0(id_player, "-", id_event, "-", from, "-", trans))
+d_multistate %>% View()
+d_from1 %>% filter(d_imp == 1, id_event == 1)
+d_multistate %>% filter(d_imp == 1, id_dlnm == "1-1-1-1")
+
+# function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
+# and the exposure history spread in wide format in a matrix
+calc_q_matrix = function(d_counting_process, d_tl_hist_wide, id, exit){
+  
+  id = id
+  exit = exit
+  
+  # for each individual, for each of these exit times, we will extract the exposure history 
+  # for the given lag-time which we are interested in
+  # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+  q = exit %>% map(., ~exphist(test_wide, ., c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+  q
+}
+
 l_multistate = (d_multistate %>% group_by(d_imp) %>% nest())$data
 d_multistate1 = d_multistate %>% filter(d_imp == 1)
+
+l_tl_hist = l_multistate %>% map(. %>% select(id_dlnm, jumps_n, stop) %>% arrange(stop, id_dlnm))
+l_tl_hist_spread_day = 
+  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n) %>% 
+                      select(-id_dlnm) %>% as.matrix)
+# calc Q matrices
+l_q_mat = map2(.x = l_tl_hist,
+               .y = l_tl_hist_spread_day, 
+               ~calc_q_matrix(.x, .y, .x$id_dlnm, .x$stop))
+
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = 3),
+                                        arglag = list(fun="ns", knots = 3)))
+
 
 # performing a regular Cox model (intercept only)
 crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
 mrcox1 = msfit(crcox1, trans = transmat)
 plot(mrcox1)
 AIC(crcox1)
+
 # add the regular covariates
 crcox2 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(crcox2)
+
 # predicted values
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
@@ -226,6 +353,17 @@ plot(mrcox2)
 
 # the cox.zph tests proportional hazards per covariate
 cox.zph(crcox2)
+
+
+# add the DLNM
+crcox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
+AIC(crcox4)
+
+crcox4 = coxme::coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                 jump_height_max + match + t_prevmatch + (1|id_player), data = d_multistate1)
+AIC(crcox4)
+
 
 # flexsurv have royston parmar models if we are worried about proportional hazards
 library(flexsurv)
@@ -274,6 +412,56 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide, id, exit){
     do.call("rbind", .)
   q
 }
+
+
+
+
+l_surv = (d_time_to_sympt %>% group_by(d_imp) %>% nest())$data
+
+l_tl_hist = l_surv %>% map(. %>% select(id_event, jumps_n, stop))
+l_tl_hist_spread_day = 
+  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n) %>% 
+                      select(-id_event) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat = map2(.x = l_surv,
+               .y = l_tl_hist_spread_day, 
+               ~calc_q_matrix(.x, .y, .x$id_event, .x$stop))
+
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = 3),
+                                        arglag = list(fun="ns", knots = 3)))
+
+
+crcox4 = coxph(Surv(start, stop, status) ~ position + age + l_cb_dlnm[[1]] +
+                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_time_to_sympt)
+AIC(crcox4)
+
+
+
+
+
+
+
+
+# counting process method
+tl_hist_spread_day = d_time_to_sympt %>% select(id_event, jumps_n, stop) %>% 
+  pivot_wider(names_from = stop, values_from = jumps_n) %>% 
+  select(-id_event) %>% as.matrix
+
+calc_q_matrix(d_from1, tl_hist_spread_day, d_from1$id_player, d_from1$stop)
+
+q_mat = tsModel::Lag(d_from1$jumps_n, lag_min:lag_max)
+
+cb_dlnm = crossbasis(q_mat, lag=c(lag_min, lag_max), 
+                      argvar = list(fun="ns", knots = c(50, 100, 150)),
+                      arglag = list(fun="ns", knots = 3))
+
+
+crcox3 = coxph(Surv(start, stop, status) ~ position + age + cb_dlnm +
+                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_from1)
+AIC(crcox3)
+
 
 # find the Q matrix for all the individuals in the whole data.
 l_tl_hist = l_multistate %>% 
