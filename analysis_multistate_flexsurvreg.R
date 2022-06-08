@@ -450,7 +450,7 @@ survobject = Surv(d_multistate_cens1$start,
                   d_multistate_cens1$status_cens, 
                   type = "interval")
 
-icenReg::ic_sp(survobject ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+icenReg::ic_sp(survobject ~ strata(trans) + position + age + season + l_cb_dlnm[[1]] +
                  jump_height_max + match + t_prevmatch, model = 'ph',
                 bs_samples = 2, data = d_multistate_cens1)
 
@@ -463,5 +463,5 @@ l_cb_dlnm[[1]][pos_na]
 l_q_mat[[1]] %>% tibble() %>% View()
 
 
-any(is.na(d_multistate_cens$jumps_n))
+any(is.na(d_multistate$jumps_n))
 
