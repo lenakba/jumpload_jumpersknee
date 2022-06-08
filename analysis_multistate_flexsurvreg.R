@@ -3,6 +3,7 @@ library(dlnm) # distributed lag non-linear models
 library(survival)
 library(lubridate) # to manipulate dates
 library(mstate) # for fitting multistate models
+library(coxme) # much better maximization and optimalization for frailty models than the trad survival package
 
 # so we don't have to deal with scientific notations
 # and strings aren't automatically read as factors:
@@ -302,7 +303,7 @@ calc_q_matrix = function(d_counting_process, d_tl_hist_wide, id, exit){
   # for each individual, for each of these exit times, we will extract the exposure history 
   # for the given lag-time which we are interested in
   # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
-  q = exit %>% map(., ~exphist(test_wide, ., c(lag_min, lag_max))) %>% 
+  q = exit %>% map(., ~exphist(d_tl_hist_wide, ., c(lag_min, lag_max))) %>% 
     do.call("rbind", .)
   q
 }
@@ -319,10 +320,15 @@ l_q_mat = map2(.x = l_tl_hist,
                .y = l_tl_hist_spread_day, 
                ~calc_q_matrix(.x, .y, .x$id_dlnm, .x$stop))
 
+# subjectively placed knots
+# since the data is so skewed
+# with sparse data >200 jumps on a day
+# just check 
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = 3),
+                                        argvar = list(fun="ns", knots = c(1, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
-
 
 # performing a regular Cox model (intercept only)
 crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
@@ -353,23 +359,26 @@ plot(mrcox2)
 # the cox.zph tests proportional hazards per covariate
 cox.zph(crcox2)
 
-
 # add the DLNM
+# the coxph won't converge, whilst coxme will
 crcox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
                  jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(crcox4)
 
-crcox5 = coxme::coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+crcox_freq = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
                  jump_height_max + match + t_prevmatch + (1|id_player), data = d_multistate1)
-AIC(crcox5)
+AIC(crcox_freq)
 
+crcox_unadj = coxme::coxme(Surv(start, stop, status) ~ strata(trans) + l_cb_dlnm[[1]] + (1|id_player), data = d_multistate1)
+AIC(crcox_unadj)
+summary(crcox_unadj)
 
 # flexsurv have royston parmar models if we are worried about proportional hazards
 library(flexsurv)
-flexsurv1 = flexsurvreg(Surv(start, stop, status) ~ 1, subset=(trans==1),
+flexsurv1 = flexsurvreg(Surv(start, stop, status) ~ l_cb_dlnm[[1]], subset=(trans==1),
             data = d_multistate1, dist = "exp")
 
-flexsurv2 = flexsurvreg(Surv(start, stop, status) ~ position + age + 
+flexsurv2 = flexsurvreg(Surv(start, stop, status) ~ position + age + l_cb_dlnm[[1]] +
               jump_height_max + match + t_prevmatch, subset=(trans==1),
             data = d_multistate1, dist = "exp")
 
@@ -390,161 +399,10 @@ AIC(crcox1)
 # predtimes
 pred_times = seq(1, 300, by = 10)
 mrexp = msfit.flexsurvreg(flex_exp, t = pred_times, trans = transmat)
-
 plot(mrexp)
 
 
-#-----------------------------------------Introducing the DLNM------------------------------
-# function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
-# and the exposure history spread in wide format in a matrix
-calc_q_matrix = function(d_counting_process, d_tl_hist_wide, id, exit){
-  
-  id = id
-  exit = exit
-  
-  # for each individual, for each of these exit times, we will extract the exposure history 
-  # for the given lag-time which we are interested in
-  # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
-  q = map2(.x = id, 
-           .y = exit, 
-           ~exphist(d_tl_hist_wide[.x,], .y, c(lag_min, lag_max))) %>% 
-    do.call("rbind", .)
-  q
-}
+#-------------------------------------include interval-censoring---------------------------
 
-
-
-
-l_surv = (d_time_to_sympt %>% group_by(d_imp) %>% nest())$data
-
-l_tl_hist = l_surv %>% map(. %>% select(id_event, jumps_n, stop))
-l_tl_hist_spread_day = 
-  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n) %>% 
-                      select(-id_event) %>% as.matrix)
-
-# calc Q matrices
-l_q_mat = map2(.x = l_surv,
-               .y = l_tl_hist_spread_day, 
-               ~calc_q_matrix(.x, .y, .x$id_event, .x$stop))
-
-l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = 3),
-                                        arglag = list(fun="ns", knots = 3)))
-
-
-crcox4 = coxph(Surv(start, stop, status) ~ position + age + l_cb_dlnm[[1]] +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_time_to_sympt)
-AIC(crcox4)
-
-
-
-
-
-
-
-
-# counting process method
-tl_hist_spread_day = d_time_to_sympt %>% select(id_event, jumps_n, stop) %>% 
-  pivot_wider(names_from = stop, values_from = jumps_n) %>% 
-  select(-id_event) %>% as.matrix
-
-calc_q_matrix(d_from1, tl_hist_spread_day, d_from1$id_player, d_from1$stop)
-
-q_mat = tsModel::Lag(d_from1$jumps_n, lag_min:lag_max)
-
-cb_dlnm = crossbasis(q_mat, lag=c(lag_min, lag_max), 
-                      argvar = list(fun="ns", knots = c(50, 100, 150)),
-                      arglag = list(fun="ns", knots = 3))
-
-
-crcox3 = coxph(Surv(start, stop, status) ~ position + age + cb_dlnm +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_from1)
-AIC(crcox3)
-
-
-# find the Q matrix for all the individuals in the whole data.
-l_tl_hist = l_multistate %>% 
-            map(. %>% distinct(id_player, date, .keep_all = TRUE) %>%  
-                select(id_player, jumps_n, stop))
-l_tl_hist_spread_day = 
-  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n) %>% 
-                      select(-id_player) %>% as.matrix)
-
-d_onestate1 = d_multistate1 %>% distinct(id_player, date, .keep_all = TRUE)
-d_q_mat = calc_q_matrix(d_onestate1, l_tl_hist_spread_day[[1]], d_onestate1$id_player, d_onestate1$stop)
-
-# make the crossbasis
-# based on the Q matrix
-# using the whole data
-cb_dlnm =  crossbasis(d_q_mat, lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = c(50, 100, 150)),
-                                        arglag = list(fun="ns", knots = 3))
-
-# for each potential transition
-# we will find the rows in the crossbasis 
-# that corresponds to the rows in the data.
-# E.g. if a player is in state 1, they can potentially transition 1 to state 2
-# if that player was in state 7 days ago, there was no potential for transition 1 to occur
-# however, the jumping they did 7 days ago still contributes to their injury risk on the current day
-# this is why we make the cross basis on the whole data first, and then subset to the 
-# needed rows per transition
-d_cb = tibble(cb_dlnm) %>% 
-  mutate(id_player = d_onestate1$id_player,
-         date = d_onestate1$date,
-         id_player_date = paste0(id_player, " ", date))
-
-d_trans1_ids = d_multistate1 %>% filter(trans == 1) %>%
-  mutate(id_player_date = paste0(id_player, " ", date))
-
-pos_data = which(d_cb$id_player_date %in% d_trans1_ids$id_player_date)
-cb_dlnm_sliced = cb_dlnm[pos_data,]
-
-d_test = d_trans1_ids %>% left_join(d_cb, by = c("id_player", "date"))
-
-# add the regular covariates
-crcox3 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + cb_dlnm +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
-AIC(crcox3)
-
-crcox4 = coxph(Surv(start, stop, status) ~ position + age + numeric(cb_dlnm_sliced) +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), 
-               data = d_multistate1 %>% filter(trans == 1))
-AIC(crcox4)
-
-
-crcox4 = coxph(Surv(start, stop, status) ~ position + age + crossbss[,12] +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), 
-               data = d_test %>% filter(trans == 1))
-AIC(crcox4)
-
-
-# OK, that didn't work
-# try making a CB for each transition type instead.
-trans_vec
-d_multistate1
-
-l_transitions  = trans_vec %>% map(.x = ., ~d_multistate1 %>% filter(trans == .x))
-
-# find the Q matrix per transition data
-l_tl_hist = l_transitions %>% 
-  map(. %>% distinct(id_player, date, .keep_all = TRUE) %>%  
-        select(id_player, jumps_n, stop))
-l_tl_hist_spread_day = 
-  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n) %>% 
-                      select(-id_player) %>% as.matrix)
-
-
-calc_q_matrix(l_transitions[[1]], l_tl_hist_spread_day[[1]], 
-              l_transitions[[1]]$id_player, l_transitions[[1]]$stop)
-
-# calc Q matrices
-l_q_mat = map2(.x = l_transitions,
-               .y = l_tl_hist_spread_day, 
-               ~calc_q_matrix(.x, .y, .x$id_player, .x$stop))
-
-# make the crossbasis
-l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = 3),
-                                        arglag = list(fun="ns", knots = 3)))
-
+d_multistate
 
