@@ -420,7 +420,7 @@ AIC(crcox_freq)
 
 
 l_multistate_cens = (d_multistate_cens %>% group_by(d_imp) %>% nest())$data
-l_tl_hist_cens = l_multistate_cens %>% map(. %>% select(id_dlnm, jumps_n, stop_cens) %>% arrange(stop_cens, id_dlnm))
+l_tl_hist_cens = l_multistate_cens %>% map(. %>% select(id_dlnm, jumps_n, stop_cens) %>% arrange(id_dlnm, stop_cens))
 l_tl_hist_spread_day_cens = 
   l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n) %>% 
                       select(-id_dlnm) %>% as.matrix)
@@ -439,9 +439,6 @@ l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                         argvar = list(fun="ns", knots = c(1, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
 
-crcox_cens = coxph(Surv(start, stop_cens, status_cens, type = "interval") ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
-                     jump_height_max + match + t_prevmatch , data = d_multistate_cens1)
-AIC(crcox_cens)
 
 
 
@@ -454,14 +451,11 @@ icenReg::ic_sp(survobject ~ strata(trans) + position + age + season + l_cb_dlnm[
                  jump_height_max + match + t_prevmatch, model = 'ph',
                 bs_samples = 2, data = d_multistate_cens1)
 
-pos_na = which(is.na(l_cb_dlnm[[1]]))
 
-l_cb_dlnm[[1]][pos_na]
+survreg_cens = survreg(survobject ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                     jump_height_max + match + t_prevmatch , data = d_multistate_cens1)
+AIC(survreg_cens)
 
+#------------------------------------------Fewer strata---------------------------------------------
 
-
-l_q_mat[[1]] %>% tibble() %>% View()
-
-
-any(is.na(d_multistate$jumps_n))
 
