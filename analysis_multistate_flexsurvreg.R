@@ -289,7 +289,6 @@ d_multistate = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player
 # the state the player is currently in
 # the event of interest (per state the player can transition to)
 d_multistate = d_multistate %>% mutate(id_dlnm = paste0(id_player, "-", id_event, "-", from, "-", trans))
-d_multistate %>% View()
 d_from1 %>% filter(d_imp == 1, id_event == 1)
 d_multistate %>% filter(d_imp == 1, id_dlnm == "1-1-1-1")
 
@@ -335,7 +334,7 @@ AIC(crcox1)
 crcox2 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(crcox2)
-
+summary(crcox2)
 # predicted values
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
@@ -360,9 +359,9 @@ crcox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb
                  jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(crcox4)
 
-crcox4 = coxme::coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+crcox5 = coxme::coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
                  jump_height_max + match + t_prevmatch + (1|id_player), data = d_multistate1)
-AIC(crcox4)
+AIC(crcox5)
 
 
 # flexsurv have royston parmar models if we are worried about proportional hazards
