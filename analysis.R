@@ -255,8 +255,6 @@ l_fit_dlnm = map2(.x = l_surv_cpform,
 AIC(l_fit_dlnm_nofrailty[[1]])
 AIC(l_fit_dlnm[[1]])
 
-summary(l_fit_dlnm[[1]])
-
 
 l_fit_preseason = map2(.x = l_surv_cpform,
                   .y = l_cb_dlnm,
