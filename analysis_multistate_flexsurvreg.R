@@ -99,7 +99,7 @@ d_kneelevels = d_kneelevels %>%
 
 # select variables wer are going to use.
 d_selected = d_kneelevels  %>% 
-  select(d_imp, id_player, date, knee_total_filled, knee_state, jumps_n, all_of(conf_cols))
+  select(d_imp, id_player, season, date, knee_total_filled, knee_state, jumps_n, all_of(conf_cols))
 
 #----------------------------------------Structuring into counting process form
 
@@ -141,19 +141,19 @@ d_selected = d_selected %>%
          change_missing = ifelse(!is.na(knee_state) & is.na(diff_prev), 1, 0),
          change = ifelse(diff_prev != 0 | change_missing == 1, 1, 0),
          change = ifelse(is.na(change), 0, change)) %>% 
-  group_by(d_imp, id_player) %>% 
+  group_by(d_imp, id_player, season) %>% 
   mutate(day = 1:n(),
          Fup = ifelse(change == 1, day, NA)) %>% fill(Fup, .direction = "up") %>% ungroup()
 
 # find start and stop times
-d_surv = d_selected %>% group_by(d_imp, id_player) %>% 
+d_surv = d_selected %>% group_by(d_imp, id_player, season) %>% 
   rename(stop = day) %>% 
   mutate(start = lag(stop),
          start = ifelse(is.na(start), 0, start)) %>% ungroup()
 
 # select again for easier analysis
 d_surv = d_surv %>% 
-  select(d_imp, id_player, date, start, stop, knee_state, Fup, jumps_n, all_of(conf_cols)) 
+  select(d_imp, id_player, season, date, start, stop, knee_state, Fup, jumps_n, all_of(conf_cols)) 
 
 # fixme! better missing solution.
 d_filled = d_surv %>% group_by(d_imp, id_player) %>% fill(knee_state, .direction = "downup") %>% ungroup()
@@ -284,14 +284,16 @@ d_from3 = bind_rows(d_from3 %>% filter(id_state == 4) %>% add_event_id(status),
 # bind data
 # congratulations, they are now ready for analysis
 d_multistate = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
+d_multistate = d_multistate %>% mutate(start = as.numeric(start),
+                                       stop = as.numeric(stop),
+                                       status = as.numeric(status))
 # add combined id for dlnm
 # it should identify each player
-# each event per player
-# the state the player is currently in
+# each season within player
+# each event within season
+# the state the player is currently in (in that event in that season)
 # the event of interest (per state the player can transition to)
-d_multistate = d_multistate %>% mutate(id_dlnm = paste0(id_player, "-", id_event, "-", from, "-", trans))
-d_from1 %>% filter(d_imp == 1, id_event == 1)
-d_multistate %>% filter(d_imp == 1, id_dlnm == "1-1-1-1")
+d_multistate = d_multistate %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event, "-", from, "-", trans))
 
 # function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
 # and the exposure history spread in wide format in a matrix
@@ -327,7 +329,7 @@ l_q_mat = map2(.x = l_tl_hist,
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = c(1, 100, 150)),
+                                        argvar = list(fun="ns", knots = c(50, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
 
 # performing a regular Cox model (intercept only)
@@ -361,17 +363,21 @@ cox.zph(crcox2)
 
 # add the DLNM
 # the coxph won't converge, whilst coxme will
-crcox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+cox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
                  jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
-AIC(crcox4)
+AIC(cox4)
 
-crcox_freq = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
-                 jump_height_max + match + t_prevmatch + (1|id_player), data = d_multistate1)
-AIC(crcox_freq)
+cox_freq = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                 jump_height_max + match + t_prevmatch + season + (1|id_player), data = d_multistate1)
+AIC(cox_freq)
 
-crcox_unadj = coxme::coxme(Surv(start, stop, status) ~ strata(trans) + l_cb_dlnm[[1]] + (1|id_player), data = d_multistate1)
-AIC(crcox_unadj)
-summary(crcox_unadj)
+cox_unadj = coxme(Surv(start, stop, status) ~ strata(trans) + l_cb_dlnm[[1]] + (1|id_player), data = d_multistate1)
+AIC(cox_unadj)
+summary(cox_unadj)
+
+cox_mstate = coxme(Surv(start, stop, status, type = "multistate") + l_cb_dlnm[[1]] + (1|id_player), data = d_multistate1)
+AIC(cox_mstate)
+summary(cox_mstate)
 
 # flexsurv have royston parmar models if we are worried about proportional hazards
 library(flexsurv)
@@ -404,5 +410,58 @@ plot(mrexp)
 
 #-------------------------------------include interval-censoring---------------------------
 
-d_multistate
+d_multistate_cens = d_multistate %>% mutate(stop_cens = ifelse(status == 1, stop+6, stop),
+                        status_cens = ifelse(status == 1, 3, status))
+d_multistate_cens1 = d_multistate_cens %>% filter(d_imp == 1)
+
+crcox_freq = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                     jump_height_max + match + t_prevmatch + (1|id_player), data = d_multistate1)
+AIC(crcox_freq)
+
+
+l_multistate_cens = (d_multistate_cens %>% group_by(d_imp) %>% nest())$data
+l_tl_hist_cens = l_multistate_cens %>% map(. %>% select(id_dlnm, jumps_n, stop_cens) %>% arrange(stop_cens, id_dlnm))
+l_tl_hist_spread_day_cens = 
+  l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n) %>% 
+                      select(-id_dlnm) %>% as.matrix)
+# calc Q matrices
+l_q_mat = map2(.x = l_tl_hist_cens,
+               .y = l_tl_hist_spread_day_cens, 
+               ~calc_q_matrix(.x, .y, .x$id_dlnm, .x$stop_cens))
+
+# subjectively placed knots
+# since the data is so skewed
+# with sparse data >200 jumps on a day
+# just check 
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = c(1, 100, 150)),
+                                        arglag = list(fun="ns", knots = 3)))
+
+crcox_cens = coxph(Surv(start, stop_cens, status_cens, type = "interval") ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                     jump_height_max + match + t_prevmatch , data = d_multistate_cens1)
+AIC(crcox_cens)
+
+
+
+survobject = Surv(d_multistate_cens1$start, 
+                  d_multistate_cens1$stop_cens, 
+                  d_multistate_cens1$status_cens, 
+                  type = "interval")
+
+icenReg::ic_sp(survobject ~ strata(trans) + position + age + l_cb_dlnm[[1]] +
+                 jump_height_max + match + t_prevmatch, model = 'ph',
+                bs_samples = 2, data = d_multistate_cens1)
+
+pos_na = which(is.na(l_cb_dlnm[[1]]))
+
+l_cb_dlnm[[1]][pos_na]
+
+
+
+l_q_mat[[1]] %>% tibble() %>% View()
+
+
+any(is.na(d_multistate_cens$jumps_n))
 
