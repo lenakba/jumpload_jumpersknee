@@ -16,7 +16,7 @@ d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 conf_cols = c("age", "jump_height_max", "position", 
-              "match", "t_prevmatch", "jumps_n_weekly", "preseason", "jump_height_sum")
+              "match", "t_prevmatch", "jumps_n_weekly", "preseason", "jump_height_sum", "weight")
 
 
 # define the min and max lag
@@ -316,12 +316,6 @@ calc_q_matrix = function(d_tl_hist_wide, id, exit){
 l_multistate = (d_multistate %>% group_by(d_imp) %>% nest())$data
 d_multistate1 = d_multistate %>% filter(d_imp == 1)
 
-# l_tl_hist = l_multistate %>% map(. %>% select(id_dlnm, jumps_n, stop) %>% arrange(stop, id_dlnm))
-# l_tl_hist_spread_day = 
-#   l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n) %>% 
-#                       select(-id_dlnm) %>% as.matrix)
-
-
 l_tl_hist = l_multistate %>% map(. %>% select(id_player, season, id_dlnm, jumps_n, stop) %>% 
                                    arrange(stop, id_dlnm))
 l_tl_hist_spread_day = 
@@ -344,6 +338,31 @@ l_q_mat = map2(.x = l_tl_hist,
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
                                         argvar = list(fun="ns", knots = c(1, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
+
+# do the same for jump height
+l_tl_hist_height = l_multistate %>% map(. %>% select(id_player, season, id_dlnm, jump_height_sum, stop) %>% 
+                                   arrange(stop, id_dlnm))
+l_tl_hist_spread_day_height = 
+  l_tl_hist_height %>% map(. %>% pivot_wider(names_from = stop, values_from = jump_height_sum)  %>% 
+                      group_by(id_player, season) %>% 
+                      fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                      select(-id_dlnm, -id_player, -season) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat_height = map2(.x = l_tl_hist_height,
+               .y = l_tl_hist_spread_day_height, 
+               ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
+
+# subjectively placed knots
+# since the data is so skewed
+# with sparse data >200 jumps on a day
+# just check 
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jump_height_sum)
+l_cb_dlnm_height = l_q_mat_height %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = c(500, 1000, 5000)),
+                                        arglag = list(fun="ns", knots = 3)))
+
 
 # performing a regular Cox model (intercept only)
 crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
@@ -377,7 +396,7 @@ cox.zph(crcox2)
 # add the DLNM
 # the coxph won't converge, whilst coxme will
 cb = l_cb_dlnm[[1]]
-
+cb_height = l_cb_dlnm_height[[1]]
 cox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + cb +
                  jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(cox4)
@@ -387,6 +406,11 @@ cox_freq = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + cb
                  jump_height_max + match + t_prevmatch + season + (1|id_player), 
                  data = d_multistate1, subset=(jumps_n!=0))
 AIC(cox_freq)
+
+cox_height = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + cb_height + 
+                   jump_height_max + match + weight + season + (1|id_player), 
+                 data = d_multistate1, subset=(jumps_n!=0))
+AIC(cox_height)
 
 # predicted values
 n_trans = max(transmat, na.rm = TRUE)
@@ -716,7 +740,7 @@ plot_cumul = ggplot(d_cumul, aes(x = jumps_n, y = value, group = 1)) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
   theme_base(text_size) +
   ostrc_theme +
-  xlab("N Jumps") +
+  xlab("N jumps daily") +
   ylab("Cumulative HR on Day 0") 
 
 # 13 is matRRfit
@@ -826,4 +850,214 @@ cairo_pdf("figure1.pdf", width = 10, height = 8)
 ggpubr::ggarrange(plot_cumul, plot_dlnm2d1, plot_dlnm2d2, plot_dlnm2d3, ncol = 2, nrow = 2, labels = c("A Cumulative effect", "B Risk on current day", "C Risk on 15th day", "D Risk on 27th day"))
 dev.off()
 
+#--------------------------------------------Figures height----------------------------------------------
 
+l_cox_freq_mstate_h = 
+  map2(.x = l_multistate,
+       .y = l_cb_dlnm_height,
+       ~coxme(Surv(start, stop, status) ~ strata(trans) + position + age + .y +
+                jump_height_max + match + weight + season + (1|id_player), 
+              data = .x, 
+              subset=(jumps_n!=0)))
+
+l_cox_freq_risk_h = 
+  map2(.x = l_multistate,
+       .y = l_cb_dlnm_height,
+       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+                jump_height_max + match + weight + season + (1|id_player), 
+              data = .x, 
+              subset=((jumps_n!=0) & (trans == 1))))
+
+
+l_cox_freq_improv_h = 
+  map2(.x = l_multistate,
+       .y = l_cb_dlnm_height,
+       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+                jump_height_max + match + weight + season + (1|id_player), 
+              data = .x, 
+              subset=(trans == 2)))
+
+l_cox_freq_worse_h = 
+  map2(.x = l_multistate,
+       .y = l_cb_dlnm_height,
+       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+                jump_height_max + match + weight + season + (1|id_player), 
+              data = .x, 
+              subset=(trans == 3)))
+
+
+library(lmisc) # loading local package for figure settings
+# shared figure options
+text_size = 14
+ostrc_theme =  theme(panel.border = element_blank(), 
+                     panel.background = element_blank(),
+                     panel.grid = element_blank(),
+                     axis.line = element_line(color = nih_distinct[4]),
+                     strip.background = element_blank(),
+                     strip.text.x = element_text(size = text_size, family="Trebuchet MS", colour="black", face = "bold", hjust = -0.01),
+                     axis.ticks = element_line(color = nih_distinct[4]),
+                     legend.position = "bottom")
+
+# vector of tl values used in visualizations of predictions
+predvalues_h = seq(min(d_analysis$jump_height_sum), 10000, 30)
+lag_seq = lag_min:lag_max 
+
+# predict hazards
+l_cp_preds_dlnm_h = 
+  map2(.x = l_cox_freq_risk_h,
+       .y = l_cb_dlnm_height,
+       ~crosspred(.y, .x, at = predvalues_h, cen = 0, cumul = TRUE))
+glimpse(l_cp_preds_dlnm_h)
+
+# function for plucking the right matrix out of the crosspred list within the list of crosspred lists
+pluck_mat = function(x, pos){pluck(l_cp_preds_dlnm_h, x, pos)}
+# the crosspred list has changed
+allRRfit = 9
+d_preds_cumul1 = pluck_mat(1, allRRfit)
+d_preds_cumul2 = pluck_mat(2, allRRfit)
+d_preds_cumul3 = pluck_mat(3, allRRfit)
+d_preds_cumul4 = pluck_mat(4, allRRfit)
+d_preds_cumul5 = pluck_mat(5, allRRfit)
+l_cumulRRfit = list(d_preds_cumul1, d_preds_cumul2, d_preds_cumul3, d_preds_cumul4, d_preds_cumul5)
+# average across preds
+mat_cumulRRfit = reduce(l_cumulRRfit, `+`) / length(l_cumulRRfit)
+
+# conflow
+allRRfit_low = 15
+d_preds_cumullow1 = pluck_mat(1, allRRfit_low)
+d_preds_cumullow2 = pluck_mat(2, allRRfit_low)
+d_preds_cumullow3 = pluck_mat(3, allRRfit_low)
+d_preds_cumullow4 = pluck_mat(4, allRRfit_low)
+d_preds_cumullow5 = pluck_mat(5, allRRfit_low)
+l_cumulRRfit_low = list(d_preds_cumullow1, d_preds_cumullow2, d_preds_cumullow3, d_preds_cumullow4, d_preds_cumullow5)
+# average across preds
+mat_cumulRRfit_low = reduce(l_cumulRRfit_low, `+`) / length(l_cumulRRfit_low)
+
+# confhigh
+allRRfit_high = 16
+d_preds_cumulhigh1 = pluck_mat(1, allRRfit_high)
+d_preds_cumulhigh2 = pluck_mat(2, allRRfit_high)
+d_preds_cumulhigh3 = pluck_mat(3, allRRfit_high)
+d_preds_cumulhigh4 = pluck_mat(4, allRRfit_high)
+d_preds_cumulhigh5 = pluck_mat(5, allRRfit_high)
+l_cumulRRfit_cumulhigh = list(d_preds_cumulhigh1, d_preds_cumulhigh2, d_preds_cumulhigh3, d_preds_cumulhigh4, d_preds_cumulhigh5)
+# average across preds
+mat_cumulRRfit_high = reduce(l_cumulRRfit_cumulhigh, `+`) / length(l_cumulRRfit_cumulhigh)
+
+d_cumul = as_tibble(mat_cumulRRfit) %>% 
+  mutate(jump_height_sum = predvalues_h, ci_low = mat_cumulRRfit_low, ci_high = mat_cumulRRfit_high)
+plot_cumul = ggplot(d_cumul, aes(x = jump_height_sum, y = value, group = 1)) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jump heights") +
+  ylab("Cumulative HR on Day 0") 
+
+# 13 is matRRfit
+matRRfit = 7
+d_preds1 = pluck_mat(1, matRRfit)
+d_preds2 = pluck_mat(2, matRRfit)
+d_preds3 = pluck_mat(3, matRRfit)
+d_preds4 = pluck_mat(4, matRRfit)
+d_preds5 = pluck_mat(5, matRRfit)
+l_matRRfit = list(d_preds1, d_preds2, d_preds3, d_preds4, d_preds5)
+# average across preds
+mat_matRRfit = reduce(l_matRRfit, `+`) / length(l_matRRfit)
+
+# conflow
+matRRfit_low = 13
+d_preds_low1 = pluck_mat(1, matRRfit_low)
+d_preds_low2 = pluck_mat(2, matRRfit_low)
+d_preds_low3 = pluck_mat(3, matRRfit_low)
+d_preds_low4 = pluck_mat(4, matRRfit_low)
+d_preds_low5 = pluck_mat(5, matRRfit_low)
+l_matRRfit_low = list(d_preds_low1, d_preds_low2, d_preds_low3, d_preds_low4, d_preds_low5)
+# average across preds
+mat_matRRfit_low = reduce(l_matRRfit_low, `+`) / length(l_matRRfit_low)
+
+# confhigh
+matRRfit_high = 14
+d_preds_high1 = pluck_mat(1, matRRfit_high)
+d_preds_high2 = pluck_mat(2, matRRfit_high)
+d_preds_high3 = pluck_mat(3, matRRfit_high)
+d_preds_high4 = pluck_mat(4, matRRfit_high)
+d_preds_high5 = pluck_mat(5, matRRfit_high)
+l_matRRfit_high = list(d_preds_high1, d_preds_high2, d_preds_high3, d_preds_high4, d_preds_high5)
+# average across preds
+mat_matRRfit_high = reduce(l_matRRfit_high, `+`) / length(l_matRRfit_high)
+
+# lag-response curve for jumps 100
+jumps_fixed = "3000"
+rownumber = which(rownames(mat_matRRfit)==jumps_fixed)
+d_preds_per_lag = as_tibble(mat_matRRfit[rownumber,]) %>% 
+  rename(coef = value) %>% 
+  mutate(lag = 0:27,
+         ci_low = mat_matRRfit_low[rownumber,],
+         ci_high = mat_matRRfit_high[rownumber,])
+
+cairo_pdf("figure2_3d.pdf", width = 12, height = 7)
+persp(x = predvalues_h, y = lag_seq, mat_matRRfit, ticktype="detailed", 
+      theta=230, ltheta=150, phi=40, lphi=30,
+      ylab="Lag (Days)", zlab="HR", shade=0.75, 
+      r=sqrt(3), d=5, cex.axis=1.2, cex.lab=1.2,
+      border=grey(0.2), col = nih_distinct[1], 
+      xlab = "Daily sum of jump height", main = "3D plane of effects")
+dev.off()
+
+# exposure-response curve for lag 0
+lag_fixed = "lag0"
+colnumber = which(colnames(mat_matRRfit) == lag_fixed)
+d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>% 
+  rename(coef = value) %>% 
+  mutate(jump_height_sum = predvalues_h,
+         ci_low = mat_matRRfit_low[,colnumber],
+         ci_high = mat_matRRfit_high[,colnumber])
+
+plot_dlnm2d1 = ggplot(d_preds_per_jump, aes(x = jump_height_sum, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jumps") +
+  ylab("HR on Day 0")
+
+lag_fixed = "lag15"
+colnumber = which(colnames(mat_matRRfit) == lag_fixed)
+d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>% 
+  rename(coef = value) %>% 
+  mutate(jump_height_sum = predvalues_h,
+         ci_low = mat_matRRfit_low[,colnumber],
+         ci_high = mat_matRRfit_high[,colnumber])
+
+plot_dlnm2d2 = ggplot(d_preds_per_jump, aes(x = jump_height_sum, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jumps") +
+  ylab("HR on Day 15") 
+
+lag_fixed = "lag27"
+colnumber = which(colnames(mat_matRRfit) == lag_fixed)
+d_preds_per_jump = as_tibble(mat_matRRfit[,colnumber]) %>% 
+  rename(coef = value) %>% 
+  mutate(jump_height_sum = predvalues_h,
+         ci_low = mat_matRRfit_low[,colnumber],
+         ci_high = mat_matRRfit_high[,colnumber])
+
+plot_dlnm2d3 = ggplot(d_preds_per_jump, aes(x = jump_height_sum, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("N jumps") +
+  ylab("HR on Day 27") 
+
+cairo_pdf("figure1.pdf", width = 10, height = 8)
+ggpubr::ggarrange(plot_cumul, plot_dlnm2d1, plot_dlnm2d2, plot_dlnm2d3, ncol = 2, nrow = 2, labels = c("A Cumulative effect", "B Risk on current day", "C Risk on 15th day", "D Risk on 27th day"))
+dev.off()
