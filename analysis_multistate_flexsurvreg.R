@@ -559,9 +559,17 @@ d_multistate_cens1 = d_multistate_cens1 %>%
   mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly))
 library(splines)
 icen_fit = icenReg::ic_par(survobject ~ strata(trans) + position + age + season + l_cb_dlnm_0lag[[1]] +
-                 jump_height_max + match + t_prevmatch + ns(jumps_n_weekly,3), model = 'ph',
+                 jump_height_max + match + t_prevmatch + frailty(id_player), model = 'ph',
                  data = d_multistate_cens1)
 summary(icen_fit)
+class(icen_fit)
+
+# vector of tl values used in visualizations of predictions
+predvalues = seq(min(d_analysis$jumps_n), 250, 10)
+lag_seq = lag_min:lag_max 
+crosspred(icen_fit, l_cb_dlnm_0lag[[1]], at = predvalues, cen = 0, cumul = TRUE)
+plot(predict(icen_fit))
+
 survreg_cens = survreg(Surv(start, 
                             stop_cens, 
                             status_cens, 
