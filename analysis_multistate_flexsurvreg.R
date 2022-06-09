@@ -502,21 +502,37 @@ l_tl_hist_spread_day_cens =
                            group_by(id_player, season) %>% 
                            fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
                            select(-id_dlnm, -id_player, -season) %>% as.matrix)
-# calc Q matrices
-l_q_mat = map2(.x = l_tl_hist_cens,
-               .y = l_tl_hist_spread_day_cens, 
-               ~calc_q_matrix(.y, .x$id_dlnm, .x$stop_cens))
 
+# make sure overlapping days are not included in the data
+d_multistate_cens = d_multistate %>% mutate(stop_cens = ifelse(status == 1, stop+6, stop),
+                                            status_cens = ifelse(status == 1, 3, status),
+                                            lag_cens = lag(status_cens, 7)) 
+pos_end = which(d_multistate_cens$lag_cens == 3)
+pos_start = pos_end-7
+pos_double = c()
+for(i in pos_end){
+  temp_vec = seq(i, i+7)
+  pos_double = append(pos_double, temp_vec)
+}
 
+d_multistate_cens = d_multistate_cens %>% slice(-pos_double)
+d_multistate_cens1 = d_multistate_cens %>% filter(d_imp == 1)
+
+l_multistate_cens = (d_multistate_cens %>% group_by(d_imp) %>% nest())$data
+l_tl_hist_cens = l_multistate_cens %>% map(. %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% 
+                                             arrange(stop_cens, id_dlnm))
+l_tl_hist_spread_day_cens_test = 
+  l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n)  %>% 
+                           group_by(id_player, season) %>% 
+                           fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                           mutate_if(is.numeric, ~ifelse(is.na(.), mean(., na.rm = TRUE), .)) %>% 
+                           select(-id_dlnm, -id_player, -season) %>% as.matrix)
 # calc Q matrices
-l_q_mat = map2(.x = l_tl_hist,
-               .y = l_tl_hist_spread_day, 
+l_q_mat_cens = map2(.x = l_multistate_cens,
+               .y = l_tl_hist_spread_day_cens_test, 
                ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
 
-l_q_mat_7lag = l_q_mat %>% map(., ~.[,-(1:7)])
-
-d_multistate_cens1 %>% filter(id_player == 24) %>% View()
-
+l_q_mat_7lag = l_q_mat_cens %>% map(., ~.[,-(1:7)])
 
 # subjectively placed knots
 # since the data is so skewed
@@ -525,28 +541,32 @@ d_multistate_cens1 %>% filter(id_player == 24) %>% View()
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 lag_min_cens = 7
-l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min_cens, lag_max), 
-                                        argvar = list(fun="ns", knots = c(50, 100, 150)),
-                                        arglag = list(fun="ns", knots = 3)))
+l_cb_dlnm_0lag = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                                  argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                                  arglag = list(fun="ns", knots = 3)))
 
-lag_min_cens = 7
 l_cb_dlnm_7lag = l_q_mat_7lag %>% map(~crossbasis(., lag=c(lag_min_cens, lag_max), 
                                         argvar = list(fun="ns", knots = c(50, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
-
 
 survobject = Surv(d_multistate_cens1$start, 
                   d_multistate_cens1$stop_cens, 
                   d_multistate_cens1$status_cens, 
                   type = "interval")
 
-icenReg::ic_sp(survobject ~ strata(trans) + position + age + season + l_cb_dlnm_7lag[[1]] +
-                 jump_height_max + match + t_prevmatch, model = 'ph',
-                bs_samples = 2, data = d_multistate_cens1)
-
-
-survreg_cens = survreg(survobject ~ strata(trans) + position + age + l_cb_dlnm_7lag[[1]] +
-                     jump_height_max + match + t_prevmatch , data = d_multistate_cens1)
+# fixme! better way to deal with missing data
+d_multistate_cens1 = d_multistate_cens1 %>% 
+  mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly))
+library(splines)
+icen_fit = icenReg::ic_par(survobject ~ strata(trans) + position + age + season + l_cb_dlnm_0lag[[1]] +
+                 jump_height_max + match + t_prevmatch + ns(jumps_n_weekly,3), model = 'ph',
+                 data = d_multistate_cens1)
+summary(icen_fit)
+survreg_cens = survreg(Surv(start, 
+                            stop_cens, 
+                            status_cens, 
+                            type = "interval") ~ strata(trans) + position + age + l_cb_dlnm_7lag[[1]] +
+                     jump_height_max + match + t_prevmatch, data = d_multistate_cens1)
 AIC(survreg_cens)
 
 #------------------------------------------Fewer strata---------------------------------------------
