@@ -148,12 +148,12 @@ d_selected = d_selected %>%
 # find start and stop times
 d_surv = d_selected %>% group_by(d_imp, id_player, season) %>% 
   rename(stop = day) %>% 
-  mutate(start = lag(stop),
-         start = ifelse(is.na(start), 0, start)) %>% ungroup()
+  mutate(enter = lag(stop),
+         enter = ifelse(is.na(enter), 0, enter)) %>% ungroup()
 
 # select again for easier analysis
 d_surv = d_surv %>% 
-  select(d_imp, id_player, season, date, start, stop, knee_state, Fup, jumps_n, all_of(conf_cols)) 
+  select(d_imp, id_player, season, date, enter, stop, knee_state, Fup, jumps_n, all_of(conf_cols)) 
 d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
                   position = as.factor(position),
                   match = as.factor(match))
@@ -287,7 +287,7 @@ d_from3 = bind_rows(d_from3 %>% filter(id_state == 4) %>% add_event_id(status),
 # bind data
 # congratulations, they are now ready for analysis
 d_multistate = bind_rows(d_from1, d_from2, d_from3) %>% arrange(d_imp, id_player, date)
-d_multistate = d_multistate %>% mutate(start = as.numeric(start),
+d_multistate = d_multistate %>% mutate(enter = as.numeric(enter),
                                        stop = as.numeric(stop),
                                        status = as.numeric(status))
 # add combined id for dlnm
@@ -365,13 +365,13 @@ l_cb_dlnm_height = l_q_mat_height %>% map(~crossbasis(., lag=c(lag_min, lag_max)
 
 
 # performing a regular Cox model (intercept only)
-crcox1 = coxph(Surv(start, stop, status) ~ strata(trans), data = d_multistate1)
+crcox1 = coxph(Surv(enter, stop, status) ~ strata(trans), data = d_multistate1)
 mrcox1 = msfit(crcox1, trans = transmat)
 plot(mrcox1)
 AIC(crcox1)
 
 # add the regular covariates
-crcox2 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
+crcox2 = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + 
                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(crcox2)
 summary(crcox2)
@@ -397,17 +397,17 @@ cox.zph(crcox2)
 # the coxph won't converge, whilst coxme will
 cb = l_cb_dlnm[[1]]
 cb_height = l_cb_dlnm_height[[1]]
-cox4 = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + cb +
+cox4 = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + cb +
                  jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(cox4)
 
 
-cox_freq = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + cb + 
+cox_freq = coxme(Surv(enter, stop, status) ~ strata(trans) + position + age + cb + 
                  jump_height_max + match + t_prevmatch + season + (1|id_player), 
                  data = d_multistate1, subset=(jumps_n!=0))
 AIC(cox_freq)
 
-cox_height = coxme(Surv(start, stop, status) ~ strata(trans) + position + age + cb_height + 
+cox_height = coxme(Surv(enter, stop, status) ~ strata(trans) + position + age + cb_height + 
                    jump_height_max + match + weight + season + (1|id_player), 
                  data = d_multistate1, subset=(jumps_n!=0))
 AIC(cox_height)
@@ -437,20 +437,20 @@ plot(cox_freq)
 l_cox_freq = 
    map2(.x = l_multistate,
         .y = l_cb_dlnm,
-        ~coxme(Surv(start, stop, status) ~ strata(trans) + position + age + .y +
+        ~coxme(Surv(enter, stop, status) ~ strata(trans) + position + age + .y +
                  jump_height_max + match + t_prevmatch + season + (1|id_player), data = .x, subset=jumps_n!=0))
 
 
-cox_unadj = coxme(Surv(start, stop, status) ~ strata(trans) + l_cb_dlnm[[1]] + (1|id_player), data = d_multistate1)
+cox_unadj = coxme(Surv(enter, stop, status) ~ strata(trans) + l_cb_dlnm[[1]] + (1|id_player), data = d_multistate1)
 AIC(cox_unadj)
 summary(cox_unadj)
 
 # flexsurv have royston parmar models if we are worried about proportional hazards
 library(flexsurv)
-flexsurv1 = flexsurvreg(Surv(start, stop, status) ~ cb, subset=(trans==1),
+flexsurv1 = flexsurvreg(Surv(enter, stop, status) ~ cb, subset=(trans==1),
             data = d_multistate1, dist = "exp")
 
-flexsurv2 = flexsurvreg(Surv(start, stop, status) ~ position + age + cb +
+flexsurv2 = flexsurvreg(Surv(enter, stop, status) ~ position + age + cb +
               jump_height_max + match + t_prevmatch, subset=(trans==1),
             data = d_multistate1, dist = "exp")
 
@@ -463,10 +463,10 @@ options(scipen = 30)
 enframe(flexsurv2.p)
 
 # Cox looks like it has a better fit
-flex_exp = flexsurvreg(Surv(start, stop, status) ~ trans + position + age + cb +
+flex_exp = flexsurvreg(Surv(enter, stop, status) ~ trans + position + age + cb +
                          jump_height_max + match + t_prevmatch,
                         data = d_multistate1, dist = "exp")
-flex_wei = flexsurvreg(Surv(start, stop, status) ~ trans,
+flex_wei = flexsurvreg(Surv(enter, stop, status) ~ trans,
                        data = d_multistate1, dist = "weibull")
 AIC(crcox1)
 # predtimes
@@ -490,18 +490,6 @@ plot(mrexp)
 
 
 #-------------------------------------include interval-censoring---------------------------
-
-d_multistate_cens = d_multistate %>% mutate(stop_cens = ifelse(status == 1, stop+6, stop),
-                        status_cens = ifelse(status == 1, 3, status))
-d_multistate_cens1 = d_multistate_cens %>% filter(d_imp == 1)
-
-l_multistate_cens = (d_multistate_cens %>% group_by(d_imp) %>% nest())$data
-l_tl_hist_cens = l_multistate_cens %>% map(. %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% arrange(stop_cens, id_dlnm))
-l_tl_hist_spread_day_cens = 
-  l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n)  %>% 
-                           group_by(id_player, season) %>% 
-                           fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                           select(-id_dlnm, -id_player, -season) %>% as.matrix)
 
 # make sure overlapping days are not included in the data
 d_multistate_cens = d_multistate %>% mutate(stop_cens = ifelse(status == 1, stop+6, stop),
@@ -549,20 +537,50 @@ l_cb_dlnm_7lag = l_q_mat_7lag %>% map(~crossbasis(., lag=c(lag_min_cens, lag_max
                                         argvar = list(fun="ns", knots = c(50, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
 
-survobject = Surv(d_multistate_cens1$start, 
+survobject = Surv(d_multistate_cens1$enter, 
                   d_multistate_cens1$stop_cens, 
                   d_multistate_cens1$status_cens, 
                   type = "interval")
 
 # fixme! better way to deal with missing data
+cb_cens = l_cb_dlnm_0lag[[1]]
 d_multistate_cens1 = d_multistate_cens1 %>% 
-  mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly))
+  mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly),
+         trans = as.factor(trans))
 library(splines)
-icen_fit = icenReg::ic_par(survobject ~ strata(trans) + position + age + season + l_cb_dlnm_0lag[[1]] +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), model = 'ph',
+library(icenReg)
+icen_fit = ic_par(survobject ~ strata(trans) + position + age + season + cb_cens +
+                 jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
                  data = d_multistate_cens1)
 summary(icen_fit)
 class(icen_fit)
+
+n_trans = max(transmat, na.rm = TRUE)
+trans_vec = as.factor(1:n_trans)
+d_preddate =  tibble(
+  trans = trans_vec,
+  age = rep(30, 5),
+  jump_height_max = rep(86, 5),
+  match = as.factor(rep(0, 5)),
+  id_player = rep(1, 5),
+  position = rep("Setter", 5),
+  cb_cens = cb_cens[1:5,],
+  t_prevmatch = rep(6, 5),
+  season = rep("2017/2018", 5),
+  jumps_n_weekly = rep(360, 5)
+)
+
+preds = predict(icen_fit, newdata = d_preddate, type = "response")
+
+
+
+plot(predict(icen_fit))
+
+# diag_baseline(icen_fit)
+# getFitEsts(icen_fit)
+plot(icen_fit)
+
+d_multistate1 %>% summarise(max(enter))
 
 # vector of tl values used in visualizations of predictions
 predvalues = seq(min(d_analysis$jumps_n), 250, 10)
@@ -570,7 +588,7 @@ lag_seq = lag_min:lag_max
 crosspred(icen_fit, l_cb_dlnm_0lag[[1]], at = predvalues, cen = 0, cumul = TRUE)
 plot(predict(icen_fit))
 
-survreg_cens = survreg(Surv(start, 
+survreg_cens = survreg(Surv(enter, 
                             stop_cens, 
                             status_cens, 
                             type = "interval") ~ strata(trans) + position + age + l_cb_dlnm_7lag[[1]] +
@@ -613,7 +631,7 @@ d_from_worse = d_from_worse %>% add_event_id(status)
 # bind data
 # congratulations, they are now ready for analysis
 d_multistate_3trans = bind_rows(d_from1, d_from_sympt, d_from_worse) %>% arrange(d_imp, id_player, date)
-d_multistate_3trans = d_multistate %>% mutate(start = as.numeric(start),
+d_multistate_3trans = d_multistate %>% mutate(enter = as.numeric(enter),
                                        stop = as.numeric(stop),
                                        status = as.numeric(status))
 # add combined id for dlnm
@@ -625,7 +643,7 @@ d_multistate_3trans = d_multistate %>% mutate(start = as.numeric(start),
 d_multistate_3trans = d_multistate_3trans %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event, "-", from, "-", trans))
 
 
-fit_3trans = coxph(Surv(start, stop, status) ~ strata(trans) + position + age + 
+fit_3trans = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + 
                  jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate_3trans)
 AIC(fit_3trans)
 summary(fit_3trans)
@@ -656,7 +674,7 @@ l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                         argvar = list(fun="ns", knots = c(1, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
 
-survobject = Surv(d_multistate_cens1$start, 
+survobject = Surv(d_multistate_cens1$enter, 
                   d_multistate_cens1$stop_cens, 
                   d_multistate_cens1$status_cens, 
                   type = "interval")
@@ -671,7 +689,7 @@ icenReg::ic_sp(survobject ~ strata(trans) + position + age + season +
 l_cox_freq_mstate = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm,
-       ~coxme(Surv(start, stop, status) ~ strata(trans) + position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ strata(trans) + position + age + .y +
                 jump_height_max + match + t_prevmatch + season + (1|id_player), 
               data = .x, 
               subset=(jumps_n!=0)))
@@ -679,7 +697,7 @@ l_cox_freq_mstate =
 l_cox_freq_risk = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm,
-       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + t_prevmatch + season + (1|id_player), 
               data = .x, 
               subset=((jumps_n!=0) & (trans == 1))))
@@ -688,7 +706,7 @@ l_cox_freq_risk =
 l_cox_freq_improv = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm,
-       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + t_prevmatch + season + (1|id_player), 
               data = .x, 
               subset=(trans == 2)))
@@ -696,7 +714,7 @@ l_cox_freq_improv =
 l_cox_freq_worse = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm,
-       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + t_prevmatch + season + (1|id_player), 
               data = .x, 
               subset=(trans == 3)))
@@ -883,7 +901,7 @@ dev.off()
 l_cox_freq_mstate_h = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm_height,
-       ~coxme(Surv(start, stop, status) ~ strata(trans) + position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ strata(trans) + position + age + .y +
                 jump_height_max + match + weight + season + (1|id_player), 
               data = .x, 
               subset=(jumps_n!=0)))
@@ -891,7 +909,7 @@ l_cox_freq_mstate_h =
 l_cox_freq_risk_h = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm_height,
-       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + weight + season + (1|id_player), 
               data = .x, 
               subset=((jumps_n!=0) & (trans == 1))))
@@ -900,7 +918,7 @@ l_cox_freq_risk_h =
 l_cox_freq_improv_h = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm_height,
-       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + weight + season + (1|id_player), 
               data = .x, 
               subset=(trans == 2)))
@@ -908,7 +926,7 @@ l_cox_freq_improv_h =
 l_cox_freq_worse_h = 
   map2(.x = l_multistate,
        .y = l_cb_dlnm_height,
-       ~coxme(Surv(start, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + weight + season + (1|id_player), 
               data = .x, 
               subset=(trans == 3)))
