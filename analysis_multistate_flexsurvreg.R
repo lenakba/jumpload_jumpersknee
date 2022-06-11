@@ -505,12 +505,21 @@ for(i in pos_end){
 
 d_multistate_cens = d_multistate_cens %>% slice(-pos_double)
 d_multistate_cens1 = d_multistate_cens %>% filter(d_imp == 1)
-
 l_multistate_cens = (d_multistate_cens %>% group_by(d_imp) %>% nest())$data
-l_tl_hist_cens = l_multistate_cens %>% map(. %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% 
-                                             arrange(stop_cens, id_dlnm))
+# we will lag by 1 day to ensure we only look at what happened before the week (the interval of uncertainty)
+l_tl_hist_cens = l_multistate_cens %>% 
+                 map(. %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% 
+                 arrange(id_dlnm) %>% 
+                   group_by(id_dlnm) %>% 
+                   mutate(jumps_n_lag = lag(jumps_n),
+                          jumps_n_lag = 
+                          ifelse(is.na(jumps_n_lag), mean(jumps_n_lag, na.rm = TRUE), jumps_n_lag)) %>% 
+                   ungroup() %>% 
+                   arrange(stop_cens, id_dlnm) %>% select(-jumps_n)
+                 )
+
 l_tl_hist_spread_day_cens_test = 
-  l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n)  %>% 
+  l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n_lag)  %>% 
                            group_by(id_player, season) %>% 
                            fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
                            mutate_if(is.numeric, ~ifelse(is.na(.), mean(., na.rm = TRUE), .)) %>% 
@@ -570,30 +579,27 @@ d_preddate =  tibble(
   jumps_n_weekly = rep(360, 5)
 )
 
-preds = predict(icen_fit, newdata = d_preddate, type = "response")
+preds = predict(icen_fit, newdata = d_preddate)
+plot(preds)
 
 
+# we will try to consider a clock-reset model 
 
-plot(predict(icen_fit))
 
-# diag_baseline(icen_fit)
-# getFitEsts(icen_fit)
-plot(icen_fit)
+d_multistate_cens1 = d_multistate_cens1 %>% 
+  group_by(id_dlnm) %>% 
+  mutate(start_cens = 0:(n()-1),
+         stop_cens_reset = 1:n(),
+         stop_cens_reset = ifelse(status_cens == 3, stop_cens_reset + 6, stop_cens_reset)) %>% 
+  ungroup()
 
-d_multistate1 %>% summarise(max(enter))
-
-# vector of tl values used in visualizations of predictions
-predvalues = seq(min(d_analysis$jumps_n), 250, 10)
-lag_seq = lag_min:lag_max 
-crosspred(icen_fit, l_cb_dlnm_0lag[[1]], at = predvalues, cen = 0, cumul = TRUE)
-plot(predict(icen_fit))
-
-survreg_cens = survreg(Surv(enter, 
-                            stop_cens, 
-                            status_cens, 
-                            type = "interval") ~ strata(trans) + position + age + l_cb_dlnm_7lag[[1]] +
-                     jump_height_max + match + t_prevmatch, data = d_multistate_cens1)
-AIC(survreg_cens)
+icen_fit_reset = ic_par(Surv(start_cens, 
+                       stop_cens_reset, 
+                       status_cens, 
+                       type = "interval") ~ strata(trans) + position + age + season + cb_cens +
+                    jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
+                  data = d_multistate_cens1)
+summary(icen_fit_reset)
 
 #------------------------------------------Fewer strata---------------------------------------------
 
