@@ -186,6 +186,31 @@ d_ostrc_dates_valid = d_ostrc_dates_valid %>%
 d_all = d_all %>% left_join(d_ostrc_dates_valid, 
                                       by = c("id_player", "id_team", "id_team_player", "id_season", "date"))
 
+
+
+# And fill substantial injury
+d_ostrc_dates = d_all %>% select(all_of(key_cols), inj_knee_subst) %>% filter(!is.na(inj_knee_subst))
+d_ostrc_dates = d_ostrc_dates %>% mutate(date_last = date+6)
+
+nested_list = d_ostrc_dates %>% group_by(id_player, id_team, id_team_player, id_season) %>% nest()
+nested_list$data = nested_list$data %>% 
+  map(., ~map2(.x = .$date, .y = .$date_last, .f = ~seq(ymd(.x), ymd(.y), by = "1 day")))
+nested_list$data = nested_list$data %>% map(., ~do.call("c", .))
+d_ostrc_dates_valid = unnest(nested_list, cols = data) %>% ungroup() %>% rename(date = data)
+
+# remove duplicated dates
+# as some OSTRC intervals overlapped
+d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
+  distinct(id_player, id_team, id_team_player, id_season, date)
+
+d_ostrc_dates_valid = d_ostrc_dates_valid %>% 
+  left_join(d_ostrc_dates, by = c("id_player", "id_team", "id_team_player", "id_season", "date")) %>% 
+  fill(inj_knee_subst, .direction = "down") %>% select(-date_last) %>% rename(inj_knee_subst_filled = inj_knee_subst)
+
+d_all = d_all %>% left_join(d_ostrc_dates_valid, 
+                            by = c("id_player", "id_team", "id_team_player", "id_season", "date"))
+
+
 # IF there are two intervals separated by a singled day
 # that is, one OSTRC qustionnaire was answered 1 day late
 # AND the values on both questionnaires were 0 (no symptoms)
@@ -230,10 +255,18 @@ d_all = d_all %>% fill(missing_consecutive) %>%
   mutate(knee_total_filled_lag = lag(knee_total_filled, 4),
          knee_total_filled_lead = lead(knee_total_filled, 4),
          missing_criteria = case_when(missing_wedged == 1 &
-                                   knee_total_filled_lag == knee_total_filled_lead~ 1,
+                                   knee_total_filled_lag == knee_total_filled_lead ~ 1,
                                    is.na(missing_wedged) ~ 0),
          knee_total_filled_orig = knee_total_filled,
-         knee_total_filled = ifelse(missing_criteria == 1, knee_total_filled_lag, knee_total_filled_orig))
+         knee_total_filled = ifelse(missing_criteria == 1, knee_total_filled_lag, knee_total_filled_orig),
+         
+         inj_knee_filled_lag = lag(inj_knee_filled, 4),
+         inj_knee_filled_orig = inj_knee_filled,
+         inj_knee_filled = ifelse(missing_criteria == 1, inj_knee_filled_lag, inj_knee_filled_orig) ,
+         
+         inj_knee_subst_filled_lag = lag(inj_knee_subst_filled, 4),
+         inj_knee_subst_filled_orig = inj_knee_subst_filled,
+         inj_knee_subst_filled = ifelse(missing_criteria == 1, inj_knee_subst_filled_lag, inj_knee_subst_filled_orig))
 
 d_all = d_all %>% select(-starts_with("missing"), -ends_with("lag"), -ends_with("lead"))
 
