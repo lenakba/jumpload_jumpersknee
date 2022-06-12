@@ -5,6 +5,14 @@ library(lubridate) # to manipulate dates
 library(mstate) # for fitting multistate models
 library(coxme) # much better maximization and optimalization for frailty models than the trad survival package
 
+
+# after meeting:
+# change worse to substantial
+# if you have problems with overfitting
+# asymptomatic to symptomatic
+# substantial to non-substantial
+# use %-jump height instead of jump height sum
+
 # so we don't have to deal with scientific notations
 # and strings aren't automatically read as factors:
 options(scipen = 30, 
@@ -370,11 +378,19 @@ mrcox1 = msfit(crcox1, trans = transmat)
 plot(mrcox1)
 AIC(crcox1)
 
+devEMF::emf("ting.emf", width = 6, height = 5)
+plot(mrcox1)
+dev.off()
+
+
 # add the regular covariates
 crcox2 = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + 
                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
 AIC(crcox2)
 summary(crcox2)
+
+
+
 # predicted values
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = 1:n_trans
@@ -388,7 +404,12 @@ d_preddate =  tibble(
   t_prevmatch = rep(6, 5)
 )
 mrcox2 = msfit(crcox2, newdata = d_preddate, trans = transmat)
+
+
+devEMF::emf("ting.emf", width = 6, height = 5)
 plot(mrcox2)
+dev.off()
+
 
 # the cox.zph tests proportional hazards per covariate
 cox.zph(crcox2)
@@ -398,7 +419,7 @@ cox.zph(crcox2)
 cb = l_cb_dlnm[[1]]
 cb_height = l_cb_dlnm_height[[1]]
 cox4 = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + cb +
-                 jump_height_max + match + t_prevmatch + frailty(id_player), data = d_multistate1)
+                 jump_height_max + match + t_prevmatch,  data = d_multistate1)
 AIC(cox4)
 
 
@@ -423,15 +444,14 @@ d_preddate =  tibble(
   id_player = rep(1, 5),
   position = rep("Setter", 5),
   t_prevmatch = rep(6, 5),
-  cb = rep(75, 5)
+  cb = cb[1:5,]
 )
 
-msfit(object = cox4, newdata = d_preddate, trans = transmat)
+mr_freq = msfit(object = cox4, newdata = d_preddate, trans = transmat)
 
-mr_freq = msfit(cox_freq, newdata = d_preddate, trans = transmat)
+devEMF::emf("training_adj.emf", width = 6, height = 5)
 plot(mr_freq)
-
-plot(cox_freq)
+dev.off()
 
 # method to manually get the pooled results from coxme: https://github.com/amices/mice/issues/123
 l_cox_freq = 
@@ -507,6 +527,10 @@ d_multistate_cens = d_multistate_cens %>% slice(-pos_double)
 d_multistate_cens1 = d_multistate_cens %>% filter(d_imp == 1)
 l_multistate_cens = (d_multistate_cens %>% group_by(d_imp) %>% nest())$data
 # we will lag by 1 day to ensure we only look at what happened before the week (the interval of uncertainty)
+# The missing data is not included in the calculation of the past load, 
+# as the event happens before it would be included
+# we can therefore fill it with whatever 
+# (the results do not change whether we choose to impute with the mean or 0, for instance)
 l_tl_hist_cens = l_multistate_cens %>% 
                  map(. %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% 
                  arrange(id_dlnm) %>% 
@@ -522,14 +546,13 @@ l_tl_hist_spread_day_cens_test =
   l_tl_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n_lag)  %>% 
                            group_by(id_player, season) %>% 
                            fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                           mutate_if(is.numeric, ~ifelse(is.na(.), mean(., na.rm = TRUE), .)) %>% 
+                           mutate_if(is.numeric, ~ifelse(is.na(.), round(mean(., na.rm = TRUE)), .)) %>% 
                            select(-id_dlnm, -id_player, -season) %>% as.matrix)
-# calc Q matrices
-l_q_mat_cens = map2(.x = l_multistate_cens,
-               .y = l_tl_hist_spread_day_cens_test, 
-               ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
 
-l_q_mat_7lag = l_q_mat_cens %>% map(., ~.[,-(1:7)])
+# calc Q matrices
+l_q_mat_cens = map2(.x = l_tl_hist_cens,
+               .y = l_tl_hist_spread_day_cens_test, 
+               ~calc_q_matrix(.y, .x$id_dlnm, .x$stop_cens))
 
 # subjectively placed knots
 # since the data is so skewed
@@ -537,32 +560,59 @@ l_q_mat_7lag = l_q_mat_cens %>% map(., ~.[,-(1:7)])
 # just check 
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
-lag_min_cens = 7
 l_cb_dlnm_0lag = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
                                                   argvar = list(fun="ns", knots = c(50, 100, 150)),
                                                   arglag = list(fun="ns", knots = 3)))
 
-l_cb_dlnm_7lag = l_q_mat_7lag %>% map(~crossbasis(., lag=c(lag_min_cens, lag_max), 
-                                        argvar = list(fun="ns", knots = c(50, 100, 150)),
-                                        arglag = list(fun="ns", knots = 3)))
-
-survobject = Surv(d_multistate_cens1$enter, 
-                  d_multistate_cens1$stop_cens, 
-                  d_multistate_cens1$status_cens, 
-                  type = "interval")
-
-# fixme! better way to deal with missing data
 cb_cens = l_cb_dlnm_0lag[[1]]
 d_multistate_cens1 = d_multistate_cens1 %>% 
   mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly),
          trans = as.factor(trans))
 library(splines)
 library(icenReg)
-icen_fit = ic_par(survobject ~ strata(trans) + position + age + season + cb_cens +
+icen_fit = ic_par(Surv(enter, 
+                       stop_cens, 
+                       status_cens, 
+                       type = "interval") ~ strata(trans) + position + age + season + cb_cens +
                  jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
                  data = d_multistate_cens1)
 summary(icen_fit)
 class(icen_fit)
+confint(icen_fit)
+
+
+# we think this is wrong. 
+pos_trans1 = which(d_multistate_cens1$trans==1)
+d_multistate_cens1_trans1 = d_multistate_cens1 %>% filter(trans == 1)
+cb_cens_trans1 = cb_cens[pos_trans1]
+icen_fit_test = ic_par(Surv(enter, 
+                       stop_cens, 
+                       status_cens, 
+                       type = "interval") ~ position + age + season + cb_cens_trans1 +
+                       jump_height_max + match + t_prevmatch + jumps_n_weekly  + frailty(id_player), model = 'ph',
+                       data = d_multistate_cens1_trans1)
+summary(icen_fit_test)
+class(icen_fit_test)
+
+
+d_multistate_cens1_combined = cbind(d_multistate_cens1, as_tibble(cb_cens)%>% rename_with( ~ paste0("cb_cens", .x)))
+options(scipen = 15)
+icen_fit_t_to_sympt = ic_par(Surv(enter, 
+                                   stop_cens, 
+                                   status_cens, 
+                                   type = "interval") ~ position + age + season + 
+                               cb_censv1.l1 + cb_censv1.l2 + cb_censv1.l3 + cb_censv2.l1 + cb_censv2.l2 + cb_censv2.l3 + cb_censv3.l1 + cb_censv3.l2 + cb_censv3.l3 + cb_censv4.l1 + cb_censv4.l2 + cb_censv4.l3 +
+                                jump_height_max + match + t_prevmatch + jumps_n_weekly + frailty(id_player), model = 'ph',
+                              data = d_multistate_cens1_combined %>% filter(trans == 1))
+
+
+icen_fit_t_to_asympt = ic_par(Surv(enter, 
+            stop_cens, 
+            status_cens, 
+            type = "interval") ~ position + age + season + 
+              cb_censv1.l1 +  cb_censv1.l2 + cb_censv1.l3 + cb_censv2.l1 + cb_censv2.l2 + cb_censv2.l3 + cb_censv3.l1 + cb_censv3.l2 + cb_censv3.l3 + cb_censv4.l1 + cb_censv4.l2 + cb_censv4.l3 +
+         jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
+       data = d_multistate_cens1_combined %>% filter(trans == 2))
 
 n_trans = max(transmat, na.rm = TRUE)
 trans_vec = as.factor(1:n_trans)
@@ -582,10 +632,7 @@ d_preddate =  tibble(
 preds = predict(icen_fit, newdata = d_preddate)
 plot(preds)
 
-
 # we will try to consider a clock-reset model 
-
-
 d_multistate_cens1 = d_multistate_cens1 %>% 
   group_by(id_dlnm) %>% 
   mutate(start_cens = 0:(n()-1),
@@ -600,6 +647,73 @@ icen_fit_reset = ic_par(Surv(start_cens,
                     jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
                   data = d_multistate_cens1)
 summary(icen_fit_reset)
+
+
+
+# check estimates when manually stratified
+l_tl_hist_cens_trans1 = l_multistate_cens %>% 
+  map(. %>% filter(trans == 1) %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% 
+        arrange(id_dlnm) %>% 
+        group_by(id_dlnm) %>% 
+        mutate(jumps_n_lag = lag(jumps_n),
+               jumps_n_lag = 
+                 ifelse(is.na(jumps_n_lag), mean(jumps_n_lag, na.rm = TRUE), jumps_n_lag)) %>% 
+        ungroup() %>% 
+        arrange(stop_cens, id_dlnm) %>% select(-jumps_n)
+  )
+
+l_tl_hist_spread_day_cens_trans1 = 
+  l_tl_hist_cens_trans1 %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n_lag)  %>% 
+                           group_by(id_player, season) %>% 
+                           fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                           mutate_if(is.numeric, ~ifelse(is.na(.), mean(., na.rm = TRUE), .)) %>% 
+                           select(-id_dlnm, -id_player, -season) %>% as.matrix)
+# calc Q matrices
+l_q_mat_cens_trans1 = map2(.x = l_tl_hist_cens_trans1,
+                    .y = l_tl_hist_spread_day_cens_trans1, 
+                    ~calc_q_matrix(.y, .x$id_dlnm, .x$stop_cens))
+
+
+
+l_cb_dlnm_0lag_trans1 = l_q_mat_cens_trans1 %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                                  argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                                  arglag = list(fun="ns", knots = 3)))
+
+cb_cens_trans1 = l_cb_dlnm_0lag_trans1[[1]]
+d_multistate_cens1_trans1 = d_multistate_cens1 %>% filter(trans == 1) %>% 
+  mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly),
+         trans = as.factor(trans))
+d_multistate_cens1_trans1 = d_multistate_cens1_trans1 %>% 
+  group_by(id_dlnm) %>% 
+  mutate(start_cens = 0:(n()-1),
+         stop_cens_reset = 1:n(),
+         stop_cens_reset = ifelse(status_cens == 3, stop_cens_reset + 6, stop_cens_reset)) %>% 
+  ungroup()
+library(splines)
+library(icenReg)
+options(scipen = 30)
+icen_fit = ic_par(Surv(start_cens, 
+                  stop_cens_reset, 
+                  status_cens, 
+                  type = "interval") ~ position + age + season + cb_cens_trans1 +
+                    jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
+                  data = d_multistate_cens1_trans1)
+summary(icen_fit)
+class(icen_fit)
+confint(icen_fit)
+
+# max is 42
+# carry on is 1.5
+# large suitcase = 3.4
+(6.3-1.5)+
+(7.4-1.5)+
+(4.6-1.5)+
+(6-1.5)+
+(6.4-1.5)+
+1.5 + # est. skittentøy +
+(5-1.5) + #nicetohave (hårsletter, pysjbukse, hvit tskjorte, sportssekk, abstract-bok) 
+3.4 +
+3
 
 #------------------------------------------Fewer strata---------------------------------------------
 
@@ -744,7 +858,7 @@ lag_seq = lag_min:lag_max
 
 # predict hazards
 l_cp_preds_dlnm = 
-  map2(.x = l_cox_freq_risk,
+  map2(.x = l_cox_freq_improv,
        .y = l_cb_dlnm,
        ~crosspred(.y, .x, at = predvalues, cen = 0, cumul = TRUE))
 glimpse(l_cp_preds_dlnm)
@@ -795,6 +909,9 @@ plot_cumul = ggplot(d_cumul, aes(x = jumps_n, y = value, group = 1)) +
   xlab("N jumps daily") +
   ylab("Cumulative HR on Day 0") 
 
+devEMF::emf("cumul_jumps_asympt.emf", height = 6, width = 8)
+plot_cumul
+dev.off()
 # 13 is matRRfit
 matRRfit = 7
 d_preds1 = pluck_mat(1, matRRfit)
@@ -902,6 +1019,10 @@ cairo_pdf("figure1.pdf", width = 10, height = 8)
 ggpubr::ggarrange(plot_cumul, plot_dlnm2d1, plot_dlnm2d2, plot_dlnm2d3, ncol = 2, nrow = 2, labels = c("A Cumulative effect", "B Risk on current day", "C Risk on 15th day", "D Risk on 27th day"))
 dev.off()
 
+devEMF::emf("dlnm_jumps_asympt.emf", height = 7, width = 10)
+ggpubr::ggarrange(plot_cumul, plot_dlnm2d1, plot_dlnm2d2, plot_dlnm2d3, ncol = 2, nrow = 2, labels = c("A Cumulative effect", "B Risk on current day", "C Risk on 15th day", "D Risk on 27th day"))
+dev.off()
+
 #--------------------------------------------Figures height----------------------------------------------
 
 l_cox_freq_mstate_h = 
@@ -1006,6 +1127,11 @@ plot_cumul = ggplot(d_cumul, aes(x = jump_height_sum, y = value, group = 1)) +
   ostrc_theme +
   xlab("Daily sum of jump heights") +
   ylab("Cumulative HR on Day 0") 
+
+
+devEMF::emf("dlnm_height.emf", height = 6, width = 8)
+plot_cumul
+dev.off()
 
 # 13 is matRRfit
 matRRfit = 7
