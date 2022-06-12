@@ -435,7 +435,6 @@ no_imputation_vars = names(
   d_daily_jumps %>% select(session_type_raw,
                         height_KE_updated,
                         height_ke_modified,
-                        jump_height_max_percent,
                         month_day, 
                         starts_with("Knee"),
                         starts_with("Shoulder"),
@@ -445,7 +444,6 @@ no_imputation_vars = names(
                         inj_shoulder, inj_lowback,
                         Match_number, game_type)
 )
-
 # we extract these columns so we may join them on the imputed data later
 d_outvars = d_daily_jumps %>% select(all_of(key_cols), all_of(no_imputation_vars))
 
@@ -548,5 +546,11 @@ d_mult_imputed_joined2 = d_mult_imputed_joined2 %>%
          jumps_height_weekly = ifelse(index %in% 1:6, NA, jumps_height_weekly)
   ) %>% ungroup()
 
+d_mult_imputed_joined2 = 
+d_mult_imputed_joined2 %>% 
+  mutate(jump_max_sum = jump_height_max*jumps_n,
+         jump_max_sum = ifelse(session_type == "no volleyball", 0, jump_max_sum),
+         jump_height_sum_perc = (jump_height_sum/jump_max_sum)*100,
+         jump_height_sum_perc = ifelse(session_type == "no volleyball", 0, jump_height_sum_perc)) 
 # save as R object for analysis in separate script
 saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed.rds"))
