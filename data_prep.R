@@ -555,6 +555,7 @@ d_mult_imputed_joined2 %>%
          jump_height_sum_perc = case_when(session_type == "no volleyball"~ 0, 
                                           jump_height_sum == 0 ~ 0,
                                           jumps_n == 0 ~ 0,
+                                          jump_height_sum > jump_max_sum ~ 100,
                                           TRUE ~jump_height_sum_perc)) 
 
 # save as R object for analysis in separate script
