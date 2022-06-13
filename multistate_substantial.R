@@ -411,17 +411,36 @@ l_cb_asympt_height = l_q_mat_asympt_height %>% map(~crossbasis(., lag=c(lag_min,
                                                  argvar = list(fun="ns", knots = c(20, 50, 80)),
                                                  arglag = list(fun="poly", degree = 2)))
 
-
 cb_asympt = l_cb_asympt[[1]]
-cox_asympt = coxph(Surv(enter, stop, status) ~ position + age + cb_asympt +
-                   jump_height_max + match + t_prevmatch + frailty(id_player),  data = d_asympt1)
+cox_asympt = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt +
+                   jump_height_max + match + t_prevmatch + (1|id_player),  data = d_asympt1, 
+                   subset=(jumps_n!=0))
 summary(cox_asympt)
 AIC(cox_asympt)
 
+l_cox_asympt = 
+  map2(.x = l_asympt,
+       .y = l_cb_asympt,
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
+                jump_height_max + match + t_prevmatch + (1|id_player), 
+              data = .x, 
+              subset=(jumps_n!=0)))
 
-position + age + cb_height + 
-  jump_height_max + match + weight + season + (1|id_player)
+AIC(l_cox_asympt[[1]])
 
+cb_asympt_height = l_cb_asympt_height[[1]]
+cox_asympt_height = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt_height + 
+                            match + weight + season + (1|id_player),  data = d_asympt1)
+
+l_cox_asympt_height = 
+  map2(.x = l_asympt,
+       .y = l_cb_asympt_height,
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y + 
+                match + weight + season + (1|id_player), 
+              data = .x, 
+              subset=(jumps_n!=0)))
+summary(cox_asympt_height)
+AIC(cox_asympt_height)
 
 #----------------------------------figures-----------------------------------------------
 
@@ -460,5 +479,126 @@ plot_cumhaz_transitions_freq
 dev.off()
 
 # vector of tl values used in visualizations of predictions
-predvalues_freq = seq(min(d_analysis$jumps_n), 250, 10)
 lag_seq = lag_min:lag_max 
+predvalues_freq = seq(min(d_analysis$jumps_n), 250, 10)
+pred_values_height = seq(min(d_analysis$jump_height_sum_perc), max(d_analysis$jump_height_sum_perc), 10)
+
+# predict hazards for jump frequency and jump height
+l_cp_preds_asympt_freq = 
+  map2(.x = l_cox_asympt,
+       .y = l_cb_asympt,
+       ~crosspred(.y, .x, at = predvalues_freq, cen = 0, cumul = TRUE))
+
+l_cp_preds_asympt_height = 
+  map2(.x = l_cox_asympt_height,
+       .y = l_cb_asympt_height,
+       ~crosspred(.y, .x, at = pred_values_height, cen = 0, cumul = TRUE))
+
+# function for plucking the right matrix out of the crosspred list within the list of crosspred lists
+pluck_mat = function(l_crosspred, x, pos){pluck(l_crosspred, x, pos)}
+# function for fetching the predictions per model, than averaging the results
+fetch_matrix = function(l_crosspred, all = TRUE, lag_fixed){
+  
+  # different position for cumulative effect and non-cumulative effect
+  if(all){
+    pos = 9
+    pos_low = 15
+    pos_high = 16
+  } else {
+    pos = 7
+    pos_low = 13
+    pos_high = 14
+  }
+  
+  # obtain estimate
+  d_preds1 = pluck_mat(l_crosspred, 1, pos)
+  d_preds2 = pluck_mat(l_crosspred, 2, pos)
+  d_preds3 = pluck_mat(l_crosspred, 3, pos)
+  d_preds4 = pluck_mat(l_crosspred, 4, pos)
+  d_preds5 = pluck_mat(l_crosspred, 5, pos)
+  l_fit = list(d_preds1, d_preds2, d_preds3, d_preds4, d_preds5)
+  # average across preds
+  mat_fit = reduce(l_fit, `+`) / length(l_fit)
+  
+  # conflow
+  d_preds_low1 = pluck_mat(l_crosspred, 1, pos_low)
+  d_preds_low2 = pluck_mat(l_crosspred, 2, pos_low)
+  d_preds_low3 = pluck_mat(l_crosspred, 3, pos_low)
+  d_preds_low4 = pluck_mat(l_crosspred, 4, pos_low)
+  d_preds_low5 = pluck_mat(l_crosspred, 5, pos_low)
+  l_low = list(d_preds_low1, d_preds_low2, d_preds_low3, d_preds_low4, d_preds_low5)
+  # average across preds
+  mat_low = reduce(l_low, `+`) / length(l_low)
+  
+  # confhigh
+  d_preds_high1 = pluck_mat(l_crosspred, 1, pos_high)
+  d_preds_high2 = pluck_mat(l_crosspred, 2, pos_high)
+  d_preds_high3 = pluck_mat(l_crosspred, 3, pos_high)
+  d_preds_high4 = pluck_mat(l_crosspred, 4, pos_high)
+  d_preds_high5 = pluck_mat(l_crosspred, 5, pos_high)
+  l_high = list(d_preds_high1, d_preds_high2, d_preds_high3, d_preds_high4, d_preds_high5)
+  # average across preds
+  mat_high = reduce(l_high, `+`) / length(l_high)
+
+  # return data
+  if(all){
+  d_pred = enframe(mat_fit, name = "predvalue")  %>% 
+    mutate(ci_low = mat_low, ci_high = mat_high, predvalue = as.numeric(predvalue))  %>% 
+    rename(coef = value)
+  } else {
+    colnumber = which(colnames(mat_fit) == lag_fixed)
+    predvalues = enframe(mat_fit, name = "predvalue") %>% select(predvalue)
+    d_pred = as_tibble(mat_fit[,colnumber]) %>% 
+      rename(coef = value) %>% 
+      mutate(predvalue = as.numeric(predvalues$predvalue),
+             ci_low = mat_low[,colnumber],
+             ci_high = mat_high[,colnumber])
+  }
+  d_pred
+}
+
+d_asympt_preds_freq_cumul = fetch_matrix(l_cp_preds_asympt_freq)
+d_asympt_preds_freq_lag0 = fetch_matrix(l_cp_preds_asympt_freq, all = FALSE, "lag0")
+d_asympt_preds_height_cumul = fetch_matrix(l_cp_preds_asympt_height)
+d_asympt_preds_height_lag0 = fetch_matrix(l_cp_preds_asympt_height, all = FALSE, "lag0")
+
+ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jump heights") +
+  ylab("Cumulative HR on Day 0") 
+
+
+ggplot(d_asympt_preds_freq_lag0, aes(x = predvalue, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jumps") +
+  ylab("HR on Day 0")
+
+ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jump heights") +
+  ylab("Cumulative HR on Day 0") 
+
+
+ggplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily sum of jumps") +
+  ylab("HR on Day 0")
+
+
+
