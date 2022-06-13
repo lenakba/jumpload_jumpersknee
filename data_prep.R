@@ -436,6 +436,7 @@ no_imputation_vars = names(
                         height_KE_updated,
                         height_ke_modified,
                         month_day, 
+                        jump_height_max,
                         starts_with("Knee"),
                         starts_with("Shoulder"),
                         starts_with("LowBack"),
@@ -551,6 +552,10 @@ d_mult_imputed_joined2 %>%
   mutate(jump_max_sum = jump_height_max*jumps_n,
          jump_max_sum = ifelse(session_type == "no volleyball", 0, jump_max_sum),
          jump_height_sum_perc = (jump_height_sum/jump_max_sum)*100,
-         jump_height_sum_perc = ifelse(session_type == "no volleyball", 0, jump_height_sum_perc)) 
+         jump_height_sum_perc = case_when(session_type == "no volleyball"~ 0, 
+                                          jump_height_sum == 0 ~ 0,
+                                          jumps_n == 0 ~ 0,
+                                          TRUE ~jump_height_sum_perc)) 
+
 # save as R object for analysis in separate script
-saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed.rds"))
+#saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed.rds"))
