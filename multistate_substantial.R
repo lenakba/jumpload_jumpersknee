@@ -16,7 +16,8 @@ d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 conf_cols = c("age", "jump_height_max", "position", 
-              "match", "t_prevmatch", "jumps_n_weekly", "preseason", "jump_height_sum", "jump_height_sum_perc","weight")
+              "match", "t_prevmatch", "jumps_n_weekly", "preseason", "jump_height_sum", 
+              "jump_height_sum_perc","weight")
 
 
 # define the min and max lag
