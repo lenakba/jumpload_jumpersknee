@@ -568,7 +568,7 @@ ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
   theme_base(text_size) +
   ostrc_theme +
-  xlab("Daily sum of jump heights") +
+  xlab("Daily number of jumps") +
   ylab("Cumulative HR on Day 0") 
 
 
@@ -578,7 +578,7 @@ ggplot(d_asympt_preds_freq_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
   theme_base(text_size) +
   ostrc_theme +
-  xlab("Daily sum of jumps") +
+  xlab("Daily number of jumps") +
   ylab("HR on Day 0")
 
 ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
