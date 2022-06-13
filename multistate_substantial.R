@@ -355,8 +355,11 @@ d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
                            match = as.factor(match))
 
 # add event id to calc Q matrix
+# we also need variable that we may stratify on
+# the intervals in which the player is at risk (i.e. not while they already have symptoms)
 d_asympt = d_surv %>% add_event_id(status)
-d_asympt = d_asympt %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event))
+d_asympt = d_asympt %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
+                               inj_knee_filled_fixed = ifelse(status == 1, 2, inj_knee_filled))
 
 # calc Q matrix jump frequency
 l_asympt = (d_asympt %>% group_by(d_imp) %>% nest())$data
@@ -374,16 +377,6 @@ l_tl_hist_spread_day_asympt =
 l_q_mat_asympt = map2(.x = l_tl_hist_asympt,
                .y = l_tl_hist_spread_day_asympt, 
                ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
-
-# subjectively placed knots
-# since the data is so skewed
-# with sparse data >200 jumps on a day
-# just check 
-# ting = d_analysis %>% filter(d_imp == 1)
-# hist(ting$jumps_n)
-l_cb_asympt = l_q_mat_asympt %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = c(10, 100, 150)),
-                                        arglag = list(fun="poly", degree = 2)))
 
 # same for jump height
 # ting = d_analysis %>% filter(d_imp == 1)
@@ -407,30 +400,38 @@ l_q_mat_asympt_height = map2(.x = l_tl_hist_asympt_height,
 # just check 
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
+l_cb_asympt = l_q_mat_asympt %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                                 argvar = list(fun="ns", knots = c(10, 100, 150)),
+                                                 arglag = list(fun="poly", degree = 2)))
 l_cb_asympt_height = l_q_mat_asympt_height %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                                 argvar = list(fun="ns", knots = c(20, 50, 80)),
+                                                 argvar = list(fun="ns", knots = c(10, 60, 80)),
                                                  arglag = list(fun="poly", degree = 2)))
 
 cb_asympt = l_cb_asympt[[1]]
 cox_asympt = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt +
                    jump_height_max + match + t_prevmatch + (1|id_player),  data = d_asympt1, 
-                   subset=(jumps_n!=0))
+                   subset=(inj_knee_filled_fixed != 1))
 summary(cox_asympt)
 AIC(cox_asympt)
 
+cb_asympt_height = l_cb_asympt_height[[1]]
+cox_asympt_height = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt_height + 
+                            match + weight + season + (1|id_player),  data = d_asympt1,
+                          subset=(inj_knee_filled_fixed != 1))
+summary(cox_asympt_height)
+AIC(cox_asympt_height)
+
+# don't include days where the player does no jumping - 
+# they are not under risk those days
 l_cox_asympt = 
   map2(.x = l_asympt,
        .y = l_cb_asympt,
        ~coxme(Surv(enter, stop, status) ~ position + age + .y +
                 jump_height_max + match + t_prevmatch + (1|id_player), 
               data = .x, 
-              subset=(jumps_n!=0)))
-
-AIC(l_cox_asympt[[1]])
-
-cb_asympt_height = l_cb_asympt_height[[1]]
-cox_asympt_height = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt_height + 
-                            match + weight + season + (1|id_player),  data = d_asympt1)
+              subset=(inj_knee_filled_fixed != 1)))
 
 l_cox_asympt_height = 
   map2(.x = l_asympt,
@@ -438,9 +439,7 @@ l_cox_asympt_height =
        ~coxme(Surv(enter, stop, status) ~ position + age + .y + 
                 match + weight + season + (1|id_player), 
               data = .x, 
-              subset=(jumps_n!=0)))
-summary(cox_asympt_height)
-AIC(cox_asympt_height)
+              subset=(inj_knee_filled_fixed != 1)))
 
 #----------------------------------figures-----------------------------------------------
 
@@ -454,6 +453,8 @@ ostrc_theme =  theme(panel.border = element_blank(),
                      strip.background = element_blank(),
                      strip.text.x = element_text(size = text_size, family="Trebuchet MS", colour="black", face = "bold", hjust = -0.01),
                      axis.ticks = element_line(color = nih_distinct[4]))
+
+#------------------------------- multistate figure
 
 trans_names = c("Asymptomatic -> symptomatic",
   "Asymptomatic -> substantial",
@@ -477,6 +478,8 @@ plot_cumhaz_transitions_freq = ggplot(d_mstate_preds,
 devEMF::emf("cumhaz_transitions_freq.emf", height = 6, width = 10)
 plot_cumhaz_transitions_freq
 dev.off()
+
+#------------------------------------------stratified figures
 
 # vector of tl values used in visualizations of predictions
 lag_seq = lag_min:lag_max 
@@ -571,7 +574,6 @@ ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
   xlab("Daily number of jumps") +
   ylab("Cumulative HR on Day 0") 
 
-
 ggplot(d_asympt_preds_freq_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
@@ -587,9 +589,8 @@ ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
   theme_base(text_size) +
   ostrc_theme +
-  xlab("Daily sum of jump heights") +
+  xlab("% of max jump height") +
   ylab("Cumulative HR on Day 0") 
-
 
 ggplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
@@ -597,7 +598,7 @@ ggplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
   theme_base(text_size) +
   ostrc_theme +
-  xlab("Daily sum of jumps") +
+  xlab("% of max jump height") +
   ylab("HR on Day 0")
 
 
