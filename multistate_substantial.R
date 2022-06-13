@@ -327,13 +327,13 @@ plot(ms_freq, lwd = 2)
 # from asymptomatic to any symptoms
 # and from substantial to any other level
 d_strata = d_kneelevels  %>% 
-  select(d_imp, id_player, season, date, inj_knee_filled, inj_knee_subst_filled, jumps_n, all_of(conf_cols))
+  select(d_imp, id_player, season, date, inj_knee_subst, inj_knee_filled, 
+         inj_knee_subst_filled, jumps_n, all_of(conf_cols))
 
 # fixme! better missing solution.
-d_strata = d_strata %>% group_by(d_imp, id_player, season) %>% fill(inj_knee_filled, inj_knee_subst_filled, .direction = "downup") 
-d_strata = d_strata %>% mutate(from = lag(inj_knee_subst_filled)) %>% fill(from, .direction = "up")  %>% ungroup()
+d_strata = d_strata %>% group_by(d_imp, id_player, season) %>% 
+  fill(inj_knee_filled, inj_knee_subst_filled, .direction = "downup") 
 
-# find moments of transitions 
 # find the number of days until the transition
 d_strata = d_strata %>% 
   group_by(d_imp, id_player, season) %>% 
@@ -348,11 +348,12 @@ d_surv = d_strata %>% group_by(d_imp, id_player, season) %>%
 
 # select again for easier analysis
 d_surv = d_surv %>% 
-  select(d_imp, id_player, season, date, enter, stop, inj_knee_filled, inj_knee_subst_filled, jumps_n, all_of(conf_cols)) 
+  select(d_imp, id_player, season, date, enter, stop, inj_knee_subst, inj_knee_filled, 
+         inj_knee_subst_filled, jumps_n, all_of(conf_cols)) 
 d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
                            position = as.factor(position),
                            match = as.factor(match))
- 
+
 # add event id to calc Q matrix
 # we also need variable that we may stratify on
 # the intervals in which the player is at risk (i.e. not while they already have symptoms)
@@ -453,7 +454,9 @@ d_subst = d_surv %>% mutate(status = ifelse(lag(inj_knee_subst_filled) == 1 &
 d_subst = d_subst %>% add_event_id(status)
 d_subst = d_subst %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
                              inj_knee_subst_filled_fixed = ifelse(status == 1, 2, inj_knee_subst_filled))
-d_subst %>% select(inj_knee_subst_filled, inj_knee_subst_filled_fixed, status) %>% View()
+
+d_subst %>% filter(d_imp == 1) %>% select(inj_knee_subst, inj_knee_subst_filled, status) %>% View()
+
 # calc Q matrix jump frequency
 l_subst = (d_subst %>% group_by(d_imp) %>% nest())$data
 d_subst1 = d_subst %>% filter(d_imp == 1)
@@ -504,7 +507,7 @@ l_cb_subst_height = l_q_mat_subst_height %>% map(~crossbasis(., lag=c(lag_min, l
 cb_subst = l_cb_subst[[1]]
 cox_subst = coxme(Surv(enter, stop, status) ~ position + age + cb_subst +
                      jump_height_max + match + t_prevmatch + (1|id_player),  data = d_subst1, 
-                   subset=(inj_knee_subst_filled_fixed => 1))
+                   subset=(inj_knee_subst_filled_fixed >= 1))
 summary(cox_subst)
 AIC(cox_subst)
 
