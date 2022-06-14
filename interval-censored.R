@@ -21,6 +21,8 @@ conf_cols = c("age", "jump_height_max", "position",
 
 
 # define the min and max lag
+# we will lag the data, so lag 0
+# corresponds to the last day before the OSTRC week
 lag_min = 0
 lag_max = 27
 
@@ -255,7 +257,7 @@ l_cb_cens_nodupl = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                              argvar = list(fun="ns", knots = c(50, 100, 150)),
                                              arglag = list(fun="poly", degree = 2)))
 
-cb_cens_nodupl = l_cb_cens_nodupl[[1]]
+cb_cens_nodupl = l_cb_cens[[1]]
 pos_dups = which(d_cens1$dupl==1)
 d_cens_nodupl = d_cens1 %>% slice(-pos_dups)
 cb_cens_nodupl = cb_cens_nodupl[-pos_dups,]
@@ -264,4 +266,9 @@ icen_fit_nodupl = ic_par(Surv(enter, stop_cens, status_cens, type = "interval") 
       position + age + season + cb_cens_nodupl +
       jump_height_max + match + t_prevmatch + jumps_n_weekly, 
       model = 'ph', data = d_cens_nodupl)
+
+
+ic_sp(Surv(enter, stop_cens, status_cens, type = "interval") ~ position + age + season + cb_cens_nodupl +
+        jump_height_max + match + t_prevmatch + jumps_n_weekly, 
+      data = d_cens_nodupl, model = "ph", bs_samples = 3)
 
