@@ -122,6 +122,20 @@ add_event_id = function(d, status){
   d_time_to_sympt
 }
 
+# function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
+# and the exposure history spread in wide format in a matrix
+calc_q_matrix = function(d_tl_hist_wide, id, exit){
+  
+  id = id
+  exit = exit
+  
+  # for each individual, for each of these exit times, we will extract the exposure history 
+  # for the given lag-time which we are interested in
+  # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+  q = exit %>% map(., ~exphist(d_tl_hist_wide, ., c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+  q
+}
 
 # from asymptomatic to any symptoms
 d_strata = d_analysis  %>% 
@@ -177,7 +191,9 @@ d_cens = d_surv %>% group_by(d_imp, id_player, season) %>%
   ungroup() %>% 
   select(-starts_with("lag"))
 
-# we can either filter to no dupl rows, or subset them during analysis.
+# make into list
+d_cens1 = d_cens %>% filter(d_imp == 1)
+l_cens = (d_cens %>% group_by(d_imp) %>% nest())$data
 
 # we will lag by 1 day to ensure we only look at what happened before the week (the interval of uncertainty)
 # The missing data is not included in the calculation of the past load, 
@@ -185,18 +201,18 @@ d_cens = d_surv %>% group_by(d_imp, id_player, season) %>%
 # we can therefore fill it with whatever 
 # (the results do not change whether we choose to impute with the mean or 0, for instance)
 l_hist_cens = l_cens %>% 
-  map(. %>% select(id_player, season, id_dlnm, jumps_n, stop_cens) %>% 
+  map(. %>% select(id_player, season, id_dlnm, jumps_n, stop) %>% 
         arrange(id_dlnm) %>% 
         group_by(id_dlnm) %>% 
         mutate(jumps_n_lag = lag(jumps_n),
                jumps_n_lag = 
-                 ifelse(is.na(jumps_n_lag), mean(jumps_n_lag, na.rm = TRUE), jumps_n_lag)) %>% 
+                 ifelse(is.na(jumps_n_lag), mean(jumps_n, na.rm = TRUE), jumps_n_lag)) %>% 
         ungroup() %>% 
-        arrange(stop_cens, id_dlnm) %>% select(-jumps_n)
+        arrange(stop, id_dlnm) %>% select(-jumps_n)
   )
 
 l_hist_spread_day_cens = 
-  l_hist_cens %>% map(. %>% pivot_wider(names_from = stop_cens, values_from = jumps_n_lag)  %>% 
+  l_hist_cens %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n_lag)  %>% 
                            group_by(id_player, season) %>% 
                            fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
                            mutate_if(is.numeric, ~ifelse(is.na(.), round(mean(., na.rm = TRUE)), .)) %>% 
@@ -205,7 +221,7 @@ l_hist_spread_day_cens =
 # calc Q matrices
 l_q_mat_cens = map2(.x = l_hist_cens,
                     .y = l_hist_spread_day_cens, 
-                    ~calc_q_matrix(.y, .x$id_dlnm, .x$stop_cens))
+                    ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
 
 # subjectively placed knots
 # since the data is so skewed
@@ -215,17 +231,17 @@ l_q_mat_cens = map2(.x = l_hist_cens,
 # hist(ting$jumps_n)
 l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
                                                   argvar = list(fun="ns", knots = c(50, 100, 150)),
-                                                  arglag = list(fun="ns", knots = 3)))
+                                                  arglag = list(fun="poly", degree = 2)))
 
 cb_cens = l_cb_cens[[1]]
 d_cens1 = d_cens1 %>% 
   mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly),
-         trans = as.factor(trans))
+         )
 
 icen_fit = ic_par(Surv(enter, 
                        stop_cens, 
                        status_cens, 
-                       type = "interval") ~ strata(trans) + position + age + season + cb_cens +
+                       type = "interval") ~ position + age + season + cb_cens +
                     jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
                   data = d_cens1)
 summary(icen_fit)
