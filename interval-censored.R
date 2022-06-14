@@ -158,9 +158,6 @@ d_surv = d_surv %>% add_event_id(status)
 d_surv = d_surv %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
                                inj_knee_filled_fixed = ifelse(status == 1, 2, inj_knee_filled))
 
-
-d_surv %>% select(id_dlnm, inj_knee_filled, inj_knee_filled_fixed, enter, stop,  status) %>% View()
-
 #-------------------------------------include interval-censoring---------------------------
 
 # make sure overlapping days are not included in the data
