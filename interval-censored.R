@@ -195,7 +195,8 @@ d_cens = d_surv %>% group_by(d_imp, id_player, season) %>%
 d_cens1 = d_cens %>% filter(d_imp == 1)
 l_cens = (d_cens %>% group_by(d_imp) %>% nest())$data
 
-# we will lag by 1 day to ensure we only look at what happened before the week (the interval of uncertainty)
+# we will lag the jump load data by 1 day to ensure we only look at 
+# what happened before the week (the interval of uncertainty)
 # The missing data is not included in the calculation of the past load, 
 # as the event happens before it would be included
 # we can therefore fill it with whatever 
@@ -235,8 +236,9 @@ l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max),
 
 cb_cens = l_cb_cens[[1]]
 d_cens1 = d_cens1 %>% 
-  mutate(jumps_n_weekly = ifelse(is.na(jumps_n_weekly), mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly),
-         )
+  mutate(jumps_n_weekly = 
+           ifelse(is.na(jumps_n_weekly), 
+                  mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly))
 
 icen_fit = ic_par(Surv(enter, 
                        stop_cens, 
@@ -247,3 +249,19 @@ icen_fit = ic_par(Surv(enter,
 summary(icen_fit)
 class(icen_fit)
 confint(icen_fit)
+
+# removing the duplicated rows
+l_cb_cens_nodupl = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                             argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                             arglag = list(fun="poly", degree = 2)))
+
+cb_cens_nodupl = l_cb_cens_nodupl[[1]]
+pos_dups = which(d_cens1$dupl==1)
+d_cens_nodupl = d_cens1 %>% slice(-pos_dups)
+cb_cens_nodupl = cb_cens_nodupl[-pos_dups,]
+
+icen_fit_nodupl = ic_par(Surv(enter, stop_cens, status_cens, type = "interval") ~ 
+      position + age + season + cb_cens_nodupl +
+      jump_height_max + match + t_prevmatch + jumps_n_weekly, 
+      model = 'ph', data = d_cens_nodupl)
+
