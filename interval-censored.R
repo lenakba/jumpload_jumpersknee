@@ -251,6 +251,20 @@ icen_fit = ic_par(Surv(enter,
 summary(icen_fit)
 class(icen_fit)
 confint(icen_fit)
+icen_fit$coefficients
+
+conf_icen = exp(confint(icen_fit))
+conf_icen[,1]
+
+icen_summary = summary(icen_fit)
+d_icenfit = as_tibble(icen_summary$summaryParameters)
+d_icenfit = d_icenfit %>% mutate(vars = names(icen_fit$coefficients), 
+                                 ci_low = conf_icen[,1], ci_high = conf_icen[,2])
+
+write_excel_csv(d_icenfit, "icen_fit.csv", delim = ";", na = "")
+
+
+
 
 # removing the duplicated rows
 l_cb_cens_nodupl = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
