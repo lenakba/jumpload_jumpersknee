@@ -233,7 +233,7 @@ l_q_mat_cens = map2(.x = l_hist_cens,
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                                  argvar = list(fun="poly", degree = 2),
+                                                  argvar = list(fun="ns", knots = c(50, 100, 150)),
                                                   arglag = list(fun="poly", degree = 2)))
 
 cb_cens = l_cb_cens[[1]]
