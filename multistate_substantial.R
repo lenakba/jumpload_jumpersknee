@@ -294,7 +294,7 @@ l_q_mat = map2(.x = l_tl_hist,
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = c(1, 100, 150)),
+                                        argvar = list(fun="ns", knots = c(10, 100, 150)),
                                         arglag = list(fun="ns", knots = 3)))
 
 cb = l_cb_dlnm[[1]]
@@ -455,8 +455,6 @@ d_subst = d_subst %>% add_event_id(status)
 d_subst = d_subst %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
                              inj_knee_subst_filled_fixed = ifelse(status == 1, 2, inj_knee_subst_filled))
 
-d_subst %>% filter(d_imp == 1) %>% select(inj_knee_subst, inj_knee_subst_filled, status) %>% View()
-
 # calc Q matrix jump frequency
 l_subst = (d_subst %>% group_by(d_imp) %>% nest())$data
 d_subst1 = d_subst %>% filter(d_imp == 1)
@@ -537,14 +535,6 @@ l_cox_subst_height =
               subset=(inj_knee_filled_fixed != 1)))
 
 
-
-
-
-
-
-
-
-
 #----------------------------------figures-----------------------------------------------
 
 library(lmisc) # loading local package for figure settings
@@ -579,9 +569,9 @@ plot_cumhaz_transitions_freq = ggplot(d_mstate_preds,
   theme_line(text_size) +
   ostrc_theme 
 
-devEMF::emf("cumhaz_transitions_freq.emf", height = 6, width = 10)
-plot_cumhaz_transitions_freq
-dev.off()
+# devEMF::emf("cumhaz_transitions_freq.emf", height = 6, width = 10)
+# plot_cumhaz_transitions_freq
+# dev.off()
 
 #------------------------------------------stratified figures
 
@@ -669,7 +659,7 @@ d_asympt_preds_freq_lag0 = fetch_matrix(l_cp_preds_asympt_freq, all = FALSE, "la
 d_asympt_preds_height_cumul = fetch_matrix(l_cp_preds_asympt_height)
 d_asympt_preds_height_lag0 = fetch_matrix(l_cp_preds_asympt_height, all = FALSE, "lag0")
 
-ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
+cumul_freq = ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -678,7 +668,7 @@ ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
   xlab("Daily number of jumps") +
   ylab("Cumulative HR on Day 0") 
 
-ggplot(d_asympt_preds_freq_lag0, aes(x = predvalue, y = coef, group = 1)) +
+lag0_feq = ggplot(d_asympt_preds_freq_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -687,7 +677,7 @@ ggplot(d_asympt_preds_freq_lag0, aes(x = predvalue, y = coef, group = 1)) +
   xlab("Daily number of jumps") +
   ylab("HR on Day 0")
 
-ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
+cumul_height = ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -696,7 +686,7 @@ ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
   xlab("% of max jump height") +
   ylab("Cumulative HR on Day 0") 
 
-ggplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
+lag0_height = gplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -706,4 +696,7 @@ ggplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
   ylab("HR on Day 0")
 
 
+devEMF::emf("cumhaz_freq.emf", height = 6, width = 10)
+cumul_freq
+dev.off()
 
