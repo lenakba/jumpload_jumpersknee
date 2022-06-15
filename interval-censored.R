@@ -24,7 +24,7 @@ conf_cols = c("age", "jump_height_max", "position",
 # we will lag the data, so lag 0
 # corresponds to the last day before the OSTRC week
 lag_min = 0
-lag_max = 27
+lag_max = 20
 
 # select columns that may be useful in analyses
 d_analysis = d_jumpload %>% 
@@ -233,7 +233,7 @@ l_q_mat_cens = map2(.x = l_hist_cens,
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                                  argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                                  argvar = list(fun="ns", knots = c(10, 100, 150)),
                                                   arglag = list(fun="poly", degree = 2)))
 
 cb_cens = l_cb_cens[[1]]
