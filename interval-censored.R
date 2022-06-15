@@ -126,7 +126,7 @@ add_event_id = function(d, status){
 
 # function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
 # and the exposure history spread in wide format in a matrix
-calc_q_matrix = function(d_tl_hist_wide, id, exit){
+calc_q_matrix = function(d_tl_hist_wide, id, exit, lag_min, lag_max){
   
   id = id
   exit = exit
@@ -218,13 +218,13 @@ l_hist_spread_day_cens =
   l_hist_cens %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n_lag)  %>% 
                            group_by(id_player, season) %>% 
                            fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                           mutate_if(is.numeric, ~ifelse(is.na(.), round(mean(., na.rm = TRUE)), .)) %>% 
+                           mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>% 
                            select(-id_dlnm, -id_player, -season) %>% as.matrix)
 
 # calc Q matrices
 l_q_mat_cens = map2(.x = l_hist_cens,
                     .y = l_hist_spread_day_cens, 
-                    ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
+                    ~calc_q_matrix(.y, .x$id_dlnm, .x$stop, lag_min, lag_max))
 
 # subjectively placed knots
 # since the data is so skewed
@@ -233,7 +233,7 @@ l_q_mat_cens = map2(.x = l_hist_cens,
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                                  argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                                  argvar = list(fun="poly", degree = 2),
                                                   arglag = list(fun="poly", degree = 2)))
 
 cb_cens = l_cb_cens[[1]]
