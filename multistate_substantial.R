@@ -430,7 +430,7 @@ AIC(cox_asympt_height)
 l_cox_asympt = 
   map2(.x = l_asympt,
        .y = l_cb_asympt,
-       ~coxme(Surv(enter, stop, status) ~ position + age + .y +
+       ~coxme(Surv(enter, stop, status) ~ position + age + season + .y  + 
                 jump_height_max + match + t_prevmatch + (1|id_player), 
               data = .x, 
               subset=(inj_knee_filled_fixed != 1)))
@@ -442,6 +442,11 @@ l_cox_asympt_height =
                 match + weight + season + (1|id_player), 
               data = .x, 
               subset=(inj_knee_filled_fixed != 1)))
+
+cox_fit1 = l_cox_asympt[[1]]
+params_coxfit1 = parameters::parameters(cox_fit1)
+write_excel_csv(params_coxfit1, "cox_fit1.csv", delim = ";", na = "")
+
 
 
 #---------------------the same for substantial vs. not substantial
@@ -686,7 +691,7 @@ cumul_height = ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, 
   xlab("% of max jump height") +
   ylab("Cumulative HR on Day 0") 
 
-lag0_height = gplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
+lag0_height = ggplot(d_asympt_preds_height_lag0, aes(x = predvalue, y = coef, group = 1)) +
   geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
   geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -700,3 +705,14 @@ devEMF::emf("cumhaz_freq.emf", height = 6, width = 10)
 cumul_freq
 dev.off()
 
+devEMF::emf("cumhaz_height.emf", height = 6, width = 10)
+cumul_height
+dev.off()
+
+devEMF::emf("day0_freq.emf", height = 6, width = 10)
+lag0_feq
+dev.off()
+
+devEMF::emf("day0_height.emf", height = 6, width = 10)
+lag0_height
+dev.off()
