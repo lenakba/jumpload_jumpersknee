@@ -308,7 +308,7 @@ ostrc_theme = theme(panel.border = element_blank(),
                      strip.text.x = element_text(size = text_size, family="Trebuchet MS", colour="black", face = "bold", hjust = -0.01),
                      axis.ticks = element_line(color = nih_distinct[4]))
 
-devEMF::emf("cumhaz_freq_icenfit.emf", height = 6, width = 10)
+devEMF::emf("cumhaz_freq_icenfit.emf", height = 4, width = 6)
 ggplot(d_preds, aes( x = jumps_n, y = hr)) +
   geom_line()  +
   geom_line(size = 0.75, color = nih_distinct[4]) +
@@ -318,3 +318,4 @@ ggplot(d_preds, aes( x = jumps_n, y = hr)) +
   ostrc_theme 
 dev.off()
 
+#-------------------------------------------testing covariates
