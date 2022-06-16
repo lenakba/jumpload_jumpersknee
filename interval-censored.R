@@ -263,26 +263,58 @@ d_icenfit = d_icenfit %>% mutate(vars = names(icen_fit$coefficients),
 
 write_excel_csv(d_icenfit, "icen_fit.csv", delim = ";", na = "")
 
+# make figures based on preds
 
+pred_seq = seq(0, 250, 10)
+n_preds = length(pred_seq)
 
+pred_mat = data.frame()
+for(i in pred_seq){
+  vec = rep(i, 21)
+  pred_mat = rbind(vec, pred_mat)
+}
+pred_mat = as.matrix(pred_mat)
 
-# removing the duplicated rows
-l_cb_cens_nodupl = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                             argvar = list(fun="ns", knots = c(50, 100, 150)),
-                                             arglag = list(fun="poly", degree = 2)))
+qmat_example = l_q_mat_cens[[1]][1:n_preds,]
+qmat_example[1:n_preds,] = pred_mat
 
-cb_cens_nodupl = l_cb_cens[[1]]
-pos_dups = which(d_cens1$dupl==1)
-d_cens_nodupl = d_cens1 %>% slice(-pos_dups)
-cb_cens_nodupl = cb_cens_nodupl[-pos_dups,]
+cb_example = crossbasis(qmat_example, lag=c(lag_min, lag_max), 
+           argvar = list(fun="ns", knots = c(10, 100, 150)),
+           arglag = list(fun="poly", degree = 2))
 
-icen_fit_nodupl = ic_par(Surv(enter, stop_cens, status_cens, type = "interval") ~ 
-      position + age + season + cb_cens_nodupl +
-      jump_height_max + match + t_prevmatch + jumps_n_weekly, 
-      model = 'ph', data = d_cens_nodupl)
+d_preddata =  tibble(
+  age = rep(30, n_preds),
+  jump_height_max = rep(86, n_preds),
+  match = as.factor(rep(0, n_preds)),
+  id_player = rep(1, n_preds),
+  position = rep("Setter", n_preds),
+  cb_cens = cb_example,
+  t_prevmatch = rep(6, n_preds),
+  season = rep("2017/2018", n_preds),
+  jumps_n_weekly = rep(360, n_preds)
+)
 
+preds = predict(icen_fit, newdata = d_preddata, type = "lp")
+d_preds = bind_cols(jumps_n = rev(pred_seq), hr = preds)
 
-ic_sp(Surv(enter, stop_cens, status_cens, type = "interval") ~ position + age + season + cb_cens_nodupl +
-        jump_height_max + match + t_prevmatch + jumps_n_weekly, 
-      data = d_cens_nodupl, model = "ph", bs_samples = 3)
+library(lmisc) # loading local package for figure settings
+# shared figure options
+text_size = 14
+ostrc_theme = theme(panel.border = element_blank(), 
+                     panel.background = element_blank(),
+                     panel.grid = element_blank(),
+                     axis.line = element_line(color = nih_distinct[4]),
+                     strip.background = element_blank(),
+                     strip.text.x = element_text(size = text_size, family="Trebuchet MS", colour="black", face = "bold", hjust = -0.01),
+                     axis.ticks = element_line(color = nih_distinct[4]))
+
+devEMF::emf("cumhaz_freq_icenfit.emf", height = 6, width = 10)
+ggplot(d_preds, aes( x = jumps_n, y = hr)) +
+  geom_line()  +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_line(text_size) + 
+  xlab("Daily jumps the previous 7 to 28 days") +
+  ylab("Cumulative HR") +
+  ostrc_theme 
+dev.off()
 
