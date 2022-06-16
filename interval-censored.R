@@ -16,7 +16,7 @@ d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 conf_cols = c("age", "jump_height_max", "position", 
-              "match", "t_prevmatch", "jumps_n_weekly", "preseason", "jump_height_sum", 
+              "match", "t_prevmatch", "jumps_n_weekly", "jumps_height_weekly", "preseason", "jump_height_sum", 
               "jump_height_sum_perc","weight")
 
 
@@ -237,10 +237,14 @@ l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                                   arglag = list(fun="poly", degree = 2)))
 
 cb_cens = l_cb_cens[[1]]
+# fixme! better missing solutions for weekly measures
 d_cens1 = d_cens1 %>% 
   mutate(jumps_n_weekly = 
            ifelse(is.na(jumps_n_weekly), 
-                  mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly))
+                  mean(jumps_n_weekly, na.rm = TRUE), jumps_n_weekly),
+         jumps_height_weekly = 
+           ifelse(is.na(jumps_height_weekly), 
+                  mean(jumps_height_weekly, na.rm = TRUE), jumps_height_weekly))
 
 icen_fit = ic_par(Surv(enter, 
                        stop_cens, 
@@ -249,13 +253,8 @@ icen_fit = ic_par(Surv(enter,
                     jump_height_max + match + t_prevmatch + jumps_n_weekly, model = 'ph',
                   data = d_cens1)
 summary(icen_fit)
-class(icen_fit)
-confint(icen_fit)
-icen_fit$coefficients
 
 conf_icen = exp(confint(icen_fit))
-conf_icen[,1]
-
 icen_summary = summary(icen_fit)
 d_icenfit = as_tibble(icen_summary$summaryParameters)
 d_icenfit = d_icenfit %>% mutate(vars = names(icen_fit$coefficients), 
@@ -318,4 +317,57 @@ ggplot(d_preds, aes( x = jumps_n, y = hr)) +
   ostrc_theme 
 dev.off()
 
-#-------------------------------------------testing covariates
+
+
+#------------------------------preseason test
+d_cens1_nodupl = d_cens1 %>% filter(dupl != 1)
+fit_preseason = ic_par(Surv(enter, 
+                            stop_cens, 
+                            status_cens, 
+                            type = "interval") ~ preseason, model = 'ph',
+                       data = d_cens1_nodupl)
+
+conf_icen = exp(confint(fit_preseason))
+icen_summary = summary(fit_preseason)
+d_icenfit_pres = as_tibble(icen_summary$summaryParameters)
+d_icenfit_pres = d_icenfit_pres %>% mutate(vars = names(fit_preseason$coefficients), 
+                                           ci_low = conf_icen[,1], ci_high = conf_icen[,2])
+
+write_excel_csv(d_icenfit_pres, "fit_preseason.csv", delim = ";", na = "")
+
+fit_preseason_adj = ic_par(Surv(enter, 
+                                stop_cens, 
+                                status_cens, 
+                                type = "interval") ~ 
+                             preseason + jumps_n_weekly + jumps_height_weekly, model = 'ph',
+                           data = d_cens1_nodupl)
+
+conf_icen = exp(confint(fit_preseason_adj))
+icen_summary = summary(fit_preseason_adj)
+d_icenfit_pres_adj = as_tibble(icen_summary$summaryParameters)
+d_icenfit_pres_adj = d_icenfit_pres_adj %>% mutate(vars = names(fit_preseason_adj$coefficients), 
+                                           ci_low = conf_icen[,1], ci_high = conf_icen[,2])
+
+write_excel_csv(d_icenfit_pres_adj, "fit_preseason_adj.csv", delim = ";", na = "")
+
+
+
+# removing the duplicated rows
+l_cb_cens_nodupl = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                             argvar = list(fun="ns", knots = c(50, 100, 150)),
+                                             arglag = list(fun="poly", degree = 2)))
+
+cb_cens_nodupl = l_cb_cens[[1]]
+pos_dups = which(d_cens1$dupl==1)
+d_cens_nodupl = d_cens1 %>% slice(-pos_dups)
+cb_cens_nodupl = cb_cens_nodupl[-pos_dups,]
+
+icen_fit_nodupl = ic_par(Surv(enter, stop_cens, status_cens, type = "interval") ~ 
+      position + age + season + cb_cens_nodupl +
+      jump_height_max + match + t_prevmatch + jumps_n_weekly, 
+      model = 'ph', data = d_cens_nodupl)
+
+ic_sp(Surv(enter, stop_cens, status_cens, type = "interval") ~ position + age + season + cb_cens_nodupl +
+        jump_height_max + match + t_prevmatch + jumps_n_weekly, 
+      data = d_cens_nodupl, model = "ph", bs_samples = 3)
+
