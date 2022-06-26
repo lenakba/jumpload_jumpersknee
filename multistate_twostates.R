@@ -4,6 +4,7 @@ library(survival)
 library(lubridate) # to manipulate dates
 library(mstate) # for fitting multistate models
 library(coxme) # much better maximization and optimalization for frailty models than the trad survival package
+library(lmisc)
 
 # so we don't have to deal with scientific notations
 # and strings aren't automatically read as factors:
@@ -47,7 +48,7 @@ d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj"), starts_with("knee
 
 # select variables we are going to use.
 d_selected = d_analysis  %>% 
-  select(d_imp, id_player, season, date, inj_knee_filled, jumps_n, all_of(conf_cols))
+  select(d_imp, id_player, season, date, inj_knee, inj_knee_filled, jumps_n, all_of(conf_cols))
 
 #---------------------------------------multistate model------------------------------------------
 
@@ -217,5 +218,344 @@ d_multistate = d_multistate %>% mutate(enter = as.numeric(enter),
                                        stop = as.numeric(stop),
                                        status = as.numeric(status))
 
-d_multistate %>% select(d_imp, id_player, from, enter, stop, status)
+# add combined id for dlnm
+# it should identify each player
+# each season within player
+# each event within season
+# the state the player is currently in (in that event in that season)
+# the event of interest (per state the player can transition to)
+d_multistate = d_multistate %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event, "-", from, "-", trans))
 
+# function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
+# and the exposure history spread in wide format in a matrix
+calc_q_matrix = function(d_tl_hist_wide, id, exit){
+  
+  id = id
+  exit = exit
+  
+  # for each individual, for each of these exit times, we will extract the exposure history 
+  # for the given lag-time which we are interested in
+  # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+  q = exit %>% map(., ~exphist(d_tl_hist_wide, ., c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+  q
+}
+
+l_multistate = (d_multistate %>% group_by(d_imp) %>% nest())$data
+d_multistate1 = d_multistate %>% filter(d_imp == 1)
+
+l_tl_hist = l_multistate %>% map(. %>% select(id_player, season, id_dlnm, jumps_n, stop) %>% 
+                                   arrange(stop, id_dlnm))
+l_tl_hist_spread_day = 
+  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n)  %>% 
+                      group_by(id_player, season) %>% 
+                      fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                      select(-id_dlnm, -id_player, -season) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat = map2(.x = l_tl_hist,
+               .y = l_tl_hist_spread_day, 
+               ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
+
+# subjectively placed knots
+# since the data is so skewed
+# with sparse data >200 jumps on a day
+# just check 
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = c(10, 100, 150)),
+                                        arglag = list(fun="ns", knots = 3)))
+
+cb = l_cb_dlnm[[1]]
+cox_freq = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + cb +
+                   jump_height_max + match + t_prevmatch,  data = d_multistate1)
+summary(cox_freq)
+AIC(cox_freq)
+
+# predicted values
+n_trans = max(transmat, na.rm = TRUE)
+trans_vec = 1:n_trans
+d_preddate =  tibble(
+  strata = trans_vec,
+  age = rep(30, n_trans),
+  jump_height_max = rep(86, n_trans),
+  match = as.factor(rep(0, n_trans)),
+  id_player = rep(1, n_trans),
+  position = rep("Setter", n_trans),
+  t_prevmatch = rep(6, n_trans),
+  cb = cb[1:n_trans,]
+)
+
+ms_freq = msfit(object = cox_freq, newdata = d_preddate, trans = transmat)
+d_mstate_preds = ms_freq$Haz %>% tibble()
+plot(ms_freq, lwd = 2)
+
+#----------------------------------Fewer states-------------------------------------------
+
+# to look at the crosspred for DLNM we are going to look at fewer states
+# from asymptomatic to any symptoms
+# and from substantial to any other level
+d_strata = d_selected  %>% 
+  select(d_imp, id_player, season, date, inj_knee, inj_knee_filled, jumps_n, all_of(conf_cols))
+
+# fixme! better missing solution.
+d_strata = d_strata %>% group_by(d_imp, id_player, season) %>% 
+  fill(inj_knee_filled, .direction = "downup") 
+
+# find the number of days until the transition
+d_strata = d_strata %>% 
+  group_by(d_imp, id_player, season) %>% 
+  mutate(day = 1:n()) %>% 
+  ungroup()
+
+# find start and stop times
+d_surv = d_strata %>% group_by(d_imp, id_player, season) %>% 
+  rename(stop = day) %>% 
+  mutate(enter = lag(stop),
+         enter = ifelse(is.na(enter), 0, enter)) %>% ungroup()
+
+# select again for easier analysis
+d_surv = d_surv %>% 
+  select(d_imp, id_player, season, date, enter, stop, inj_knee, inj_knee_filled, 
+        jumps_n, all_of(conf_cols)) 
+d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
+                           position = as.factor(position),
+                           match = as.factor(match))
+
+# add event id to calc Q matrix
+# we also need variable that we may stratify on
+# the intervals in which the player is at risk (i.e. not while they already have symptoms)
+d_asympt = d_surv %>% mutate(status = ifelse(lag(inj_knee_filled) == 0 & inj_knee_filled == 1, 1, 0),
+                             status = ifelse(is.na(status), 0, status))
+d_asympt = d_asympt %>% add_event_id(status)
+d_asympt = d_asympt %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
+                               inj_knee_filled_fixed = ifelse(status == 1, 2, inj_knee_filled))
+
+# calc Q matrix jump frequency
+l_asympt = (d_asympt %>% group_by(d_imp) %>% nest())$data
+d_asympt1 = d_asympt %>% filter(d_imp == 1)
+
+l_tl_hist_asympt = l_asympt %>% map(. %>% select(id_player, season, id_dlnm, jumps_n, stop) %>% 
+                                      arrange(stop, id_dlnm))
+l_tl_hist_spread_day_asympt = 
+  l_tl_hist_asympt %>% map(. %>% pivot_wider(names_from = stop, values_from = jumps_n)  %>% 
+                             group_by(id_player, season) %>% 
+                             fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                             select(-id_dlnm, -id_player, -season) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat_asympt = map2(.x = l_tl_hist_asympt,
+                      .y = l_tl_hist_spread_day_asympt, 
+                      ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
+
+# same for jump height
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jump_height_perc_sum)
+l_tl_hist_asympt_height = l_asympt %>% map(. %>% select(id_player, season, id_dlnm, jump_height_perc_sum, stop) %>% 
+                                             arrange(stop, id_dlnm))
+l_tl_hist_spread_day_asympt_height = 
+  l_tl_hist_asympt_height %>% map(. %>% pivot_wider(names_from = stop, values_from = jump_height_perc_sum)  %>% 
+                                    group_by(id_player, season) %>% 
+                                    fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                                    select(-id_dlnm, -id_player, -season) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat_asympt_height = map2(.x = l_tl_hist_asympt_height,
+                             .y = l_tl_hist_spread_day_asympt_height, 
+                             ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
+
+# subjectively placed knots
+# since the data is so skewed
+# with sparse data >200 jumps on a day
+# just check 
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
+l_cb_asympt = l_q_mat_asympt %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                                 argvar = list(fun="ns", knots = c(10, 100, 150)),
+                                                 arglag = list(fun="poly", degree = 2)))
+l_cb_asympt_height = l_q_mat_asympt_height %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                                               argvar = list(fun="ns", knots = c(10, 60, 80)),
+                                                               arglag = list(fun="poly", degree = 2)))
+
+cb_asympt = l_cb_asympt[[1]]
+cox_asympt = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt +
+                     jump_height_max + match + t_prevmatch + (1|id_player),  data = d_asympt1, 
+                   subset=(inj_knee_filled_fixed != 1))
+summary(cox_asympt)
+AIC(cox_asympt)
+
+cb_asympt_height = l_cb_asympt_height[[1]]
+cox_asympt_height = coxme(Surv(enter, stop, status) ~ position + age + cb_asympt_height + 
+                            match + weight + season + (1|id_player),  data = d_asympt1,
+                          subset=(inj_knee_filled_fixed != 1))
+summary(cox_asympt_height)
+AIC(cox_asympt_height)
+
+# don't include days where the player does no jumping - 
+# they are not under risk those days
+l_cox_asympt = 
+  map2(.x = l_asympt,
+       .y = l_cb_asympt,
+       ~coxme(Surv(enter, stop, status) ~ position + age + season + .y  + 
+                jump_height_max + match + t_prevmatch + (1|id_player), 
+              data = .x, 
+              subset=(inj_knee_filled_fixed != 1)))
+
+l_cox_asympt_height = 
+  map2(.x = l_asympt,
+       .y = l_cb_asympt_height,
+       ~coxme(Surv(enter, stop, status) ~ position + age + .y + 
+                match + weight + season + (1|id_player), 
+              data = .x, 
+              subset=(inj_knee_filled_fixed != 1)))
+
+cox_fit1 = l_cox_asympt[[1]]
+params_coxfit1 = parameters::parameters(cox_fit1)
+write_excel_csv(params_coxfit1, "cox_fit1.csv", delim = ";", na = "")
+
+#----------------------------------figures-----------------------------------------------
+
+library(lmisc) # loading local package for figure settings
+# shared figure options
+text_size = 14
+ostrc_theme =  theme(panel.border = element_blank(), 
+                     panel.background = element_blank(),
+                     panel.grid = element_blank(),
+                     axis.line = element_line(color = nih_distinct[4]),
+                     strip.background = element_blank(),
+                     strip.text.x = element_text(size = text_size, family="Trebuchet MS", colour="black", face = "bold", hjust = -0.01),
+                     axis.ticks = element_line(color = nih_distinct[4]))
+
+#------------------------------- multistate figure
+
+trans_names = c("Asymptomatic -> symptomatic",
+                "Symptomatic -> asymptomatic")
+
+col_vec = c(nih_distinct[1:2])
+d_mstate_preds = d_mstate_preds %>% mutate(trans_fac = factor(trans, labels = trans_names, levels = 1:6))
+text_size = 16
+plot_cumhaz_transitions_freq = ggplot(d_mstate_preds, 
+                                      aes(x = time, y = Haz, group = trans_fac, color = trans_fac)) +
+  geom_step(size = 0.75) +
+  ylab("Cumulative hazard") +
+  xlab("Time") +
+  scale_color_manual(values=col_vec) +
+  theme_line(text_size) +
+  ostrc_theme 
+
+# devEMF::emf("cumhaz_transitions_freq.emf", height = 6, width = 10)
+# plot_cumhaz_transitions_freq
+# dev.off()
+
+#------------------------------------------stratified figures
+
+# vector of tl values used in visualizations of predictions
+lag_seq = lag_min:lag_max 
+predvalues_freq = seq(min(d_analysis$jumps_n), 250, 10)
+pred_values_height = seq(min(d_analysis$jump_height_perc_sum), 150, 10)
+
+# predict hazards for jump frequency and jump height
+l_cp_preds_asympt_freq = 
+  map2(.x = l_cox_asympt,
+       .y = l_cb_asympt,
+       ~crosspred(.y, .x, at = predvalues_freq, cen = 0, cumul = TRUE))
+
+l_cp_preds_asympt_height = 
+  map2(.x = l_cox_asympt_height,
+       .y = l_cb_asympt_height,
+       ~crosspred(.y, .x, at = pred_values_height, cen = 0, cumul = TRUE))
+
+# function for plucking the right matrix out of the crosspred list within the list of crosspred lists
+pluck_mat = function(l_crosspred, x, pos){pluck(l_crosspred, x, pos)}
+# function for fetching the predictions per model, than averaging the results
+fetch_matrix = function(l_crosspred, all = TRUE, lag_fixed){
+  
+  # different position for cumulative effect and non-cumulative effect
+  if(all){
+    pos = 9
+    pos_low = 15
+    pos_high = 16
+  } else {
+    pos = 7
+    pos_low = 13
+    pos_high = 14
+  }
+  
+  # obtain estimate
+  d_preds1 = pluck_mat(l_crosspred, 1, pos)
+  d_preds2 = pluck_mat(l_crosspred, 2, pos)
+  d_preds3 = pluck_mat(l_crosspred, 3, pos)
+  d_preds4 = pluck_mat(l_crosspred, 4, pos)
+  d_preds5 = pluck_mat(l_crosspred, 5, pos)
+  l_fit = list(d_preds1, d_preds2, d_preds3, d_preds4, d_preds5)
+  # average across preds
+  mat_fit = reduce(l_fit, `+`) / length(l_fit)
+  
+  # conflow
+  d_preds_low1 = pluck_mat(l_crosspred, 1, pos_low)
+  d_preds_low2 = pluck_mat(l_crosspred, 2, pos_low)
+  d_preds_low3 = pluck_mat(l_crosspred, 3, pos_low)
+  d_preds_low4 = pluck_mat(l_crosspred, 4, pos_low)
+  d_preds_low5 = pluck_mat(l_crosspred, 5, pos_low)
+  l_low = list(d_preds_low1, d_preds_low2, d_preds_low3, d_preds_low4, d_preds_low5)
+  # average across preds
+  mat_low = reduce(l_low, `+`) / length(l_low)
+  
+  # confhigh
+  d_preds_high1 = pluck_mat(l_crosspred, 1, pos_high)
+  d_preds_high2 = pluck_mat(l_crosspred, 2, pos_high)
+  d_preds_high3 = pluck_mat(l_crosspred, 3, pos_high)
+  d_preds_high4 = pluck_mat(l_crosspred, 4, pos_high)
+  d_preds_high5 = pluck_mat(l_crosspred, 5, pos_high)
+  l_high = list(d_preds_high1, d_preds_high2, d_preds_high3, d_preds_high4, d_preds_high5)
+  # average across preds
+  mat_high = reduce(l_high, `+`) / length(l_high)
+  
+  # return data
+  if(all){
+    d_pred = enframe(mat_fit, name = "predvalue")  %>% 
+      mutate(ci_low = mat_low, ci_high = mat_high, predvalue = as.numeric(predvalue))  %>% 
+      rename(coef = value)
+  } else {
+    colnumber = which(colnames(mat_fit) == lag_fixed)
+    predvalues = enframe(mat_fit, name = "predvalue") %>% select(predvalue)
+    d_pred = as_tibble(mat_fit[,colnumber]) %>% 
+      rename(coef = value) %>% 
+      mutate(predvalue = as.numeric(predvalues$predvalue),
+             ci_low = mat_low[,colnumber],
+             ci_high = mat_high[,colnumber])
+  }
+  d_pred
+}
+
+d_asympt_preds_freq_cumul = fetch_matrix(l_cp_preds_asympt_freq)
+d_asympt_preds_height_cumul = fetch_matrix(l_cp_preds_asympt_height)
+
+cumul_freq = ggplot(d_asympt_preds_freq_cumul, aes(x = predvalue, y = coef, group = 1)) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  theme_base(text_size) +
+  ostrc_theme +
+  xlab("Daily number of jumps") +
+  ylab("Cumulative HR on Day 0") 
+
+cumul_height = ggplot(d_asympt_preds_height_cumul, aes(x = predvalue, y = coef, group = 1)) +
+  geom_ribbon(aes(min = ci_low, max = ci_high), alpha = 0.3, fill = nih_distinct[1]) +
+  geom_hline(yintercept = 1, alpha = 0.3, size = 1) +
+  geom_line(size = 0.75, color = nih_distinct[4]) +
+  ostrc_theme +
+  xlab("% of max jump height (arb. u)") +
+  ylab("Cumulative HR on Day 0") +
+  theme_base(text_size) 
+
+devEMF::emf("cumhaz_freq.emf", height = 6, width = 10)
+cumul_freq
+dev.off()
+
+devEMF::emf("cumhaz_height.emf", height = 6, width = 10)
+cumul_height
+dev.off()
