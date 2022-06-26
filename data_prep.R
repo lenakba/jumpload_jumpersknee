@@ -323,7 +323,7 @@ d_unimputed =
   group_by(id_player, date) %>% 
   mutate(jumps_n = sum(n_jump),
          jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n),
-         jump_height_perc = jump_height/jump_height_max,
+         jump_height_perc = (jump_height/jump_height_max)*100,
          jump_height_perc = ifelse(jump_height == 0, 0, jump_height_perc),
          jump_height_perc_sum = sum(jump_height_perc, na.rm = TRUE),
          jump_height_sum = sum(jump_height, na.rm = TRUE)) %>% ungroup()
