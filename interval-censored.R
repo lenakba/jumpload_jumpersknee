@@ -301,10 +301,10 @@ text_size = 14
 ostrc_theme = theme(panel.border = element_blank(), 
                      panel.background = element_blank(),
                      panel.grid = element_blank(),
-                     axis.line = element_line(color = "darkblue"),
+                     axis.line = element_line(color = nih_distinct[4]),
                      strip.background = element_blank(),
                      strip.text.x = element_text(size = text_size, family="Trebuchet MS", colour="black", face = "bold", hjust = -0.01),
-                     axis.ticks = element_line(color = "darkblue"))
+                     axis.ticks = element_line(color = nih_distinct[4]))
 
 devEMF::emf("cumhaz_freq_icenfit.emf", height = 4, width = 6)
 ggplot(d_preds, aes( x = jumps_n, y = hr)) +
