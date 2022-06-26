@@ -377,7 +377,7 @@ l_cb_asympt = l_q_mat_asympt %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                                  argvar = list(fun="ns", knots = c(10, 100, 150)),
                                                  arglag = list(fun="poly", degree = 2)))
 l_cb_asympt_height = l_q_mat_asympt_height %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                                               argvar = list(fun="ns", knots = c(10, 60, 80)),
+                                                               argvar = list(fun="ns", knots = c(1000, 3000, 8000)),
                                                                arglag = list(fun="poly", degree = 2)))
 
 cb_asympt = l_cb_asympt[[1]]
@@ -414,7 +414,7 @@ l_cox_asympt_height =
 
 cox_fit1 = l_cox_asympt[[1]]
 params_coxfit1 = parameters::parameters(cox_fit1)
-write_excel_csv(params_coxfit1, "cox_fit1.csv", delim = ";", na = "")
+#write_excel_csv(params_coxfit1, "cox_fit1.csv", delim = ";", na = "")
 
 #----------------------------------figures-----------------------------------------------
 
@@ -455,7 +455,7 @@ plot_cumhaz_transitions_freq = ggplot(d_mstate_preds,
 # vector of tl values used in visualizations of predictions
 lag_seq = lag_min:lag_max 
 predvalues_freq = seq(min(d_analysis$jumps_n), 250, 10)
-pred_values_height = seq(min(d_analysis$jump_height_perc_sum), 150, 10)
+pred_values_height = seq(min(d_analysis$jump_height_perc_sum), 15000, 10)
 
 # predict hazards for jump frequency and jump height
 l_cp_preds_asympt_freq = 
