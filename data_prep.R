@@ -323,15 +323,17 @@ d_unimputed =
   group_by(id_player, date) %>% 
   mutate(jumps_n = sum(n_jump),
          jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n),
-         jump_height_sum = sum(jump_height, na.rm = TRUE),
-         jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum)) %>% ungroup()
+         jump_height_perc = jump_height/jump_height_max,
+         jump_height_perc = ifelse(jump_height == 0, 0, jump_height_perc),
+         jump_height_perc_sum = sum(jump_height_perc, na.rm = TRUE),
+         jump_height_sum = sum(jump_height, na.rm = TRUE)) %>% ungroup()
 
 d_unimputed_daily = d_unimputed %>% 
   distinct(date, id_player, id_team, id_team_player, id_season, session_type, .keep_all = TRUE)
 
 d_unimputed_daily = d_unimputed_daily %>% 
   select(all_of(key_cols), session_type, game_type, jumps_n, 
-                             jump_height_sum,
+                             jump_height_sum, jump_height_perc_sum, 
                              jump_height_max_percent,
                              height_ke_modified, load_index_KE, height_KE_updated)
 
@@ -359,6 +361,7 @@ d_daily_jumps = d_daily_jumps %>%
   mutate(jumps_n = ifelse(session_type == "no volleyball", 0, jumps_n),
          jump_height_max_percent = ifelse(session_type == "no volleyball", 0, jump_height_max_percent),
          jump_height_sum = ifelse(session_type == "no volleyball", 0, jump_height_sum),
+         jump_height_perc_sum = ifelse(session_type == "no volleyball", 0, jump_height_perc_sum),
          load_index_KE = ifelse(session_type == "no volleyball", 0, load_index_KE)) 
 
 # fill no matches in match results
@@ -457,7 +460,7 @@ d_pre_impute = d_daily_jumps %>% select(-all_of(no_imputation_vars))
 library(mice)
 
 # specify which variables we need imputed
-imputevars = c("jumps_n", "weight", "jump_height_sum")
+imputevars = c("jumps_n", "weight", "jump_height_sum", "jump_height_perc_sum")
 # specify method for imputation model
 method_impute = make.method(d_pre_impute)
 method_impute["jumps_n"] = "pmm"
@@ -479,7 +482,7 @@ l_mids_jumpload = mice(d_pre_impute, method = method_impute, pred = pred, m = 5,
 densityplot(l_mids_jumpload, ~jumps_n)
 densityplot(l_mids_jumpload, ~weight)
 densityplot(l_mids_jumpload, ~jump_height_sum)
-
+densityplot(l_mids_jumpload, ~jump_height_perc_sum)
 
 d_mult_imputed = l_mids_jumpload %>% 
                  mice::complete("long") %>% tibble() %>% 
@@ -531,7 +534,7 @@ d_mult_imputed_joined = d_mult_imputed %>%
 
 # repeat for jump height
 nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
-nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jump_height_sum, window))
+nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jump_height_perc_sum, window))
 d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
   ungroup() %>% mutate(index = 1:n()) %>% 
   rename(jumps_height_weekly = data)
@@ -547,16 +550,19 @@ d_mult_imputed_joined2 = d_mult_imputed_joined2 %>%
          jumps_height_weekly = ifelse(index %in% 1:6, NA, jumps_height_weekly)
   ) %>% ungroup()
 
-d_mult_imputed_joined2 = 
-d_mult_imputed_joined2 %>% 
-  mutate(jump_max_sum = jump_height_max*jumps_n,
-         jump_max_sum = ifelse(session_type == "no volleyball", 0, jump_max_sum),
-         jump_height_sum_perc = (jump_height_sum/jump_max_sum)*100,
-         jump_height_sum_perc = case_when(session_type == "no volleyball"~ 0, 
-                                          jump_height_sum == 0 ~ 0,
-                                          jumps_n == 0 ~ 0,
-                                          jump_height_sum > jump_max_sum ~ 100,
-                                          TRUE ~jump_height_sum_perc)) 
+# we used to calculate the percent of jump height in a different way
+# the new way is more clinically relevant
+# keeping old code just in case
+# d_mult_imputed_joined2 = 
+# d_mult_imputed_joined2 %>% 
+#   mutate(jump_max_sum = jump_height_max*jumps_n,
+#          jump_max_sum = ifelse(session_type == "no volleyball", 0, jump_max_sum),
+#          jump_height_sum_perc = (jump_height_sum/jump_max_sum)*100,
+#          jump_height_sum_perc = case_when(session_type == "no volleyball"~ 0, 
+#                                           jump_height_sum == 0 ~ 0,
+#                                           jumps_n == 0 ~ 0,
+#                                           jump_height_sum > jump_max_sum ~ 100,
+#                                           TRUE ~jump_height_sum_perc)) 
 
 # save as R object for analysis in separate script
 #saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed.rds"))
