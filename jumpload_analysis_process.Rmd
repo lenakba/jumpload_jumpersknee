@@ -513,5 +513,7 @@ how much is too much to increase risk of getting worse (or never getting better?
 Time to improvement analysis?
 The idea is to include those long stretches of times players are feeling symptoms in the analysis.
 Another option was to involve an ordinal outcome. No symptoms, mild symptoms, substantial symptoms etc.
-Another concern was the interval-censored aspect. Treating the data this way introduces quite a bit of uncertainty. Lena went back to the drawing board. 
+Another concern was the interval-censored aspect. 
+Treating the data this way introduces quite a bit of uncertainty. 
+Lena went back to the drawing board. 
 
