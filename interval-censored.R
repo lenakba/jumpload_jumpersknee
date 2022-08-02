@@ -10,7 +10,7 @@ library(icenReg) # interval-censored survival analysis
 options(scipen = 30, 
         stringsAsFactors = FALSE)
 
-data_folder = "D:\\phd\\jump load\\data\\"
+data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
 d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
 
 # define key columns

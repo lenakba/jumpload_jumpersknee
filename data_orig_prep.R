@@ -1,7 +1,7 @@
 library(tidyverse)
 library(readxl)
 
-data_folder = "D:\\phd\\jump load\\data\\"
+data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
 file_name = "Raw Jump Data.xlsx"
 sheets = excel_sheets(paste0(data_folder, file_name))
 

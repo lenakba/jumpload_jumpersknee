@@ -3,7 +3,7 @@ library(readxl)
 library(lubridate) # for wrangling dates and datetimes
 library(slider) # iterative calculations across a window
 
-data_folder = "D:\\phd\\jump load\\data\\"
+data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
 d_all = read_excel(paste0(data_folder, "Final Data Set_Daily_Weekly_Pre.xlsx"), "FDS_Daily_Pre_All", na = "", skip = 4)
 d_all = d_all %>% tibble()
 
