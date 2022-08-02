@@ -163,7 +163,7 @@ d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
                            position = as.factor(position),
                            match = as.factor(match))
 
-# add event id so that we may calculate the Q amtrix per event
+# add event id so that we may calculate the Q matrix per event
 # we also need variable that we may stratify on
 # the intervals in which the player is at risk (i.e. not while they already have symptoms)
 d_surv = d_surv %>% mutate(status = ifelse(lag(inj_knee_filled) == 0 & 
@@ -235,8 +235,41 @@ l_cb_cens = l_q_mat_cens %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                                   argvar = list(fun="ns", knots = c(10, 100, 150)),
                                                   arglag = list(fun="poly", degree = 2)))
 
-cb_cens = l_cb_cens[[1]]
-# fixme! better missing solutions for weekly measures
+# do the same for jump height sum perc
+l_hist_cens_height = l_cens %>% 
+  map(. %>% select(id_player, season, id_dlnm, jump_height_perc_sum, stop) %>% 
+        arrange(id_dlnm) %>% 
+        group_by(id_dlnm) %>% 
+        mutate(jump_height_perc_lag = lag(jump_height_perc_sum),
+               jump_height_perc_lag = 
+                 ifelse(is.na(jump_height_perc_lag), mean(jump_height_perc_sum, na.rm = TRUE), jump_height_perc_lag)) %>% 
+        ungroup() %>% 
+        arrange(stop, id_dlnm) %>% select(-jump_height_perc_sum)
+  )
+
+l_hist_spread_day_cens_height = 
+  l_hist_cens_height %>% map(. %>% pivot_wider(names_from = stop, values_from = jump_height_perc_lag)  %>% 
+                        group_by(id_player, season) %>% 
+                        fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                        mutate_if(is.numeric, ~ifelse(is.na(.), 0, .)) %>% 
+                        select(-id_dlnm, -id_player, -season) %>% as.matrix)
+
+# calc Q matrices
+l_q_mat_cens_height = map2(.x = l_hist_cens_height,
+                    .y = l_hist_spread_day_cens_height, 
+                    ~calc_q_matrix(.y, .x$id_dlnm, .x$stop, lag_min, lag_max))
+
+# subjectively placed knots
+# since the data is so skewed
+# with sparse data >200 jumps on a day
+# just check 
+# ting = d_analysis %>% filter(d_imp == 1)
+# hist(ting$jumps_n)
+l_cb_cens_height = l_q_mat_cens_height %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                             argvar = list(fun="ns", knots = c(10, 100, 150)),
+                                             arglag = list(fun="poly", degree = 2)))
+
+# fill the first 6 days that are missing weekly load
 d_cens1 = d_cens1 %>% 
   mutate(jumps_n_weekly = 
            ifelse(is.na(jumps_n_weekly), 
@@ -245,6 +278,7 @@ d_cens1 = d_cens1 %>%
            ifelse(is.na(jumps_height_weekly), 
                   mean(jumps_height_weekly, na.rm = TRUE), jumps_height_weekly))
 
+cb_cens = l_cb_cens[[1]]
 icen_fit = ic_par(Surv(enter, 
                        stop_cens, 
                        status_cens, 
@@ -252,6 +286,12 @@ icen_fit = ic_par(Surv(enter,
                     jump_height_max + jumps_n_weekly, model = 'ph',
                   data = d_cens1)
 summary(icen_fit)
+
+icen_fit_interaction = ic_par(Surv(enter, 
+                       stop_cens, 
+                       status_cens, 
+                       type = "interval") ~ jumps_n_weekly + cb_cens + jumps_n_weekly*cb_cens, model = 'ph',
+                  data = d_cens1)
 
 conf_icen = exp(confint(icen_fit))
 icen_summary = summary(icen_fit)
@@ -315,4 +355,94 @@ ggplot(d_preds, aes( x = jumps_n, y = hr)) +
   ylab("Cumulative HR") +
   ostrc_theme 
 dev.off()
+
+#------------------- model for height
+cb_cens_height = l_cb_cens_height[[1]]
+icen_fit = ic_par(Surv(enter, 
+                       stop_cens, 
+                       status_cens, 
+                       type = "interval") ~ position + age + season + cb_cens_height + +
+                    jumps_height_weekly + weight, model = 'ph',
+                  data = d_cens1)
+summary(icen_fit)
+
+icen_fit_interaction = ic_par(Surv(enter, 
+                                   stop_cens, 
+                                   status_cens, 
+                                   type = "interval") ~ jumps_height_weekly + cb_cens_height + jumps_height_weekly*cb_cens_height, model = 'ph',
+                              data = d_cens1)
+summary(icen_fit_interaction)
+#-----------------------------------EWMA method
+library(slider)
+# we need to calculate EWMA on the time before the censored injury interval
+d_cens1 = d_cens1 %>% mutate(jumps_n_lag = lag(jumps_n, 7),
+                             jumps_n_lag = ifelse(is.na(jumps_n_lag), mean(jumps_n_lag, na.rm = TRUE), jumps_n_lag))
+
+# function for calculating exponentially waited moving averages
+# using similar syntax as the RA-function
+# an exponential smoothing ratio of 2/(n+1)
+# same as in williams et al. 2016
+ewma = function(x, n_days){
+  TTR::EMA(x, n = n_days, wilder = FALSE)
+}
+
+# function calculates ewma on a sliding window of 21 days
+slide_ewma = function(x){
+  l = slide(x, ~ewma(., lag_max+1), .before = lag_max, step = 1, .complete = TRUE) %>% map(last)
+  l = compact(l)
+  l = unlist(l)
+  l
+}
+
+# function to nest the exposure history data by each individual, 
+# and run a user-specified function on each of their datasets in the list
+function_on_list = function(d, FUN = NULL, day_start){
+  nested_list = d %>% group_by(id_player) %>% nest()
+  nested_list$data = nested_list$data %>% map(., ~FUN(.$jumps_n_lag))
+  l_unnest = unnest(nested_list, cols = c(data)) %>% group_by(id_player) %>% 
+    mutate(day = (lag_max+1):((n()) + (lag_max))) %>% ungroup()
+  l_unnest
+}
+
+d_ewma = function_on_list(d_cens1, slide_ewma, lag_max+1) %>% rename(jumps_n_ewma = data)
+
+# remove the first 21 rows for comparability of the AIC, 
+# which requires the same sample size for all models
+
+# fixme! per person?
+d_cens1_mods = d_cens1 %>% filter(stop >= lag_max+1)
+d_cens1_mods = d_cens1_mods %>% left_join(d_ewma, by = c("id_player", "stop" = "day"))
+
+d_cens1_mods %>% filter(is.na(jumps_n_ewma)) %>% select(id_player, date, jumps_n_lag, jumps_n_ewma)
+
+
+d_cens1_mods %>% filter(id_player == 19) %>% select(id_player, date, jumps_n_lag, jumps_n_ewma) %>% View()
+
+icen_fit = ic_par(Surv(enter, 
+                       stop_cens, 
+                       status_cens, 
+                       type = "interval") ~ jumps_n_weekly + 
+                    jumps_n_ewma + 
+                    jumps_n_weekly*jumps_n_ewma, model = 'ph',
+                  data = d_cens1_mods)
+summary(icen_fit)
+
+conf_icen = exp(confint(icen_fit))
+icen_summary = summary(icen_fit)
+d_icenfit = as_tibble(icen_summary$summaryParameters)
+d_icenfit = d_icenfit %>% mutate(vars = names(icen_fit$coefficients), 
+                                 ci_low = conf_icen[,1], ci_high = conf_icen[,2])
+
+
+
+
+
+fit_ewma = glm(injury ~ jumps_n_weekly + 
+                 jumps_n_ewma + 
+                 jumps_n_weekly*jumps_n_ewma, 
+               family = "binomial", data = d_cens1)
+
+# wald is only for faster computation
+# use bootstrap for final model
+parameters::parameters(fit_ewma, ci_method="wald", exponentiate = TRUE)
 
