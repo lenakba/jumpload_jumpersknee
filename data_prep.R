@@ -19,7 +19,7 @@ d_all = d_all %>% mutate(season =
                                     TeamSeason == "A-3" ~ "2019/2020")) 
 
 # fix so "-" means not applicable
-d_all = d_all %>%mutate_if(is.character, ~ifelse(. == "-", "not applicable", .))
+d_all = d_all %>% mutate_if(is.character, ~ifelse(. == "-", "not applicable", .))
 
 # add match variable and fix missing session-types
 d_all = d_all %>% mutate(SessionType = ifelse(is.na(SessionType), "no volleyball", SessionType))
@@ -526,11 +526,14 @@ nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
 nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jumps_n, window))
 d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
   ungroup() %>% mutate(index = 1:n()) %>% 
-  rename(jumps_n_weekly = data)
+  rename(jumps_n_weekly = data) 
+
+d_weekly_load  = d_weekly_load %>%   select(-.imp, -id_player) 
 
 d_mult_imputed_joined = d_mult_imputed %>% 
   mutate(index = 1:n()) %>% 
-  left_join(d_weekly_load, by = c(".imp", "id_player", "index"))
+  left_join(d_weekly_load, by = "index")
+
 
 # repeat for jump height
 nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
@@ -538,9 +541,10 @@ nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jump_height_perc_sum
 d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
   ungroup() %>% mutate(index = 1:n()) %>% 
   rename(jumps_height_weekly = data)
+d_weekly_load  = d_weekly_load %>%  select(-.imp, -id_player) 
 d_mult_imputed_joined2 = d_mult_imputed_joined %>% 
   mutate(index = 1:n()) %>% 
-  left_join(d_weekly_load, by = c(".imp", "id_player", "index"))
+  left_join(d_weekly_load, by = "index")
 
 # remove the first 6 rows per person for the weekly jump heights and jump frequencies
 d_mult_imputed_joined2 = d_mult_imputed_joined2 %>% 
