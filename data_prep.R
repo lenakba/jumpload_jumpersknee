@@ -318,6 +318,10 @@ d_jump_all = read_delim(paste0(data_folder,"data_per_jump.csv"), delim = ";", na
 # how many missing daily jumps?
 d_unimputed = d_jump_all %>% filter(imputed == "No") 
 
+# if multiple sessons are on the same day,
+# this is summed here
+# we do not separate match from training load
+# only 1 team collected session-level jump load
 d_unimputed = 
   d_unimputed %>% mutate(n_jump = 1) %>% 
   group_by(id_player, date) %>% 
@@ -329,7 +333,7 @@ d_unimputed =
          jump_height_sum = sum(jump_height, na.rm = TRUE)) %>% ungroup()
 
 d_unimputed_daily = d_unimputed %>% 
-  distinct(date, id_player, id_team, id_team_player, id_season, session_type, .keep_all = TRUE)
+  distinct(date, id_player, id_team, id_team_player, id_season, .keep_all = TRUE)
 
 d_unimputed_daily = d_unimputed_daily %>% 
   select(all_of(key_cols), session_type, game_type, jumps_n, 
@@ -346,8 +350,6 @@ d_unimputed_daily_sessiontypes = d_unimputed_daily %>%
 d_daily_sessiontypes = d_daily %>% select(date, id_player, session_type_daily = session_type)
 d_sessiontypes = d_daily_sessiontypes %>% 
   left_join(d_unimputed_daily_sessiontypes, by = c("date", "id_player")) %>% filter(!is.na(session_type_raw))
-
-testthat::expect_equal(d_sessiontypes$session_type_daily, d_sessiontypes$session_type_raw)
 
 # session type is not the same between daily data and the raw data
 # the daily data is more secure
@@ -526,13 +528,11 @@ nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
 nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jumps_n, window))
 d_weekly_load = unnest(nested_list, cols = c(data)) %>% 
   ungroup() %>% mutate(index = 1:n()) %>% 
-  rename(jumps_n_weekly = data) 
-
-d_weekly_load  = d_weekly_load %>%   select(-.imp, -id_player) 
+  rename(jumps_n_weekly = data)
 
 d_mult_imputed_joined = d_mult_imputed %>% 
   mutate(index = 1:n()) %>% 
-  left_join(d_weekly_load, by = "index")
+  left_join(d_weekly_load, by = c(".imp", "id_player", "index"))
 
 
 # repeat for jump height
@@ -569,4 +569,4 @@ d_mult_imputed_joined2 = d_mult_imputed_joined2 %>%
 #                                           TRUE ~jump_height_sum_perc)) 
 
 # save as R object for analysis in separate script
-#saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed.rds"))
+# saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed_daily.rds"))
