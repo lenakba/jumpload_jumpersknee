@@ -10,7 +10,7 @@ options(scipen = 30,
         stringsAsFactors = FALSE)
 
 data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
-d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
+d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed_daily.rds"))
 
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
@@ -123,11 +123,11 @@ add_event_id = function(d, status){
 }
 
 # from asymptomatic to any symptoms
-d_strata = d_analysis  %>% 
+d_analysis_selected = d_analysis  %>% 
   select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, all_of(conf_cols))
 
 # fixme! better missing solution.
-d_strata = d_strata %>% group_by(d_imp, id_player, season) %>% 
+d_strata = d_analysis_selected %>% group_by(d_imp, id_player, season) %>% 
   fill(inj_knee_filled, .direction = "downup") 
 
 # denote the day number up until end of player study period
@@ -183,19 +183,284 @@ d_weekly = d_surv %>%
   filter(!(status == 0 & inj_knee_filled == 1)) %>% 
   group_by(d_imp, id_dlnm) %>% mutate(week = difftime(max(date)+7, date, units = "weeks"),
                                 week = as.numeric(round(rev(week))),
-                                day = 1:n(),
-                                jumps_height_weekly = ifelse(status == 1,
-                                jumps_height_weekly_lead, jumps_height_weekly)) %>% ungroup()
+                                day = 1:n()) %>% ungroup()
 
 d_weekly = d_weekly %>% mutate(id_player = as.character(id_player))
+d_weekly = d_weekly %>% select(-stop)
+
+
+# model without DLNM
+
+library(lme4) # for mixed models
+fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + weight + (1|id_player), 
+             data = d_weekly %>% filter(d_imp == 1),
+             family=binomial(link="cloglog"))
+parameters::parameters(fit1, exponentiate = TRUE)
+
+AIC(fit1)
+
+
+#------------------------------------- DLNM with the missing data method-----------------
+
+
+# fixme!
+# how should weekly load be assessed?
+# jumps_height_weekly = ifelse(status == 1,
+#                             jumps_height_weekly_lead, jumps_height_weekly)
+d_weekly = d_surv %>%
+  select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
+         jump_height_perc_sum, status, inj_knee_filled, all_of(conf_cols), stop) %>% 
+  group_by(d_imp, id_player) %>%
+  mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
+  ungroup() 
+
+d_weekly = d_weekly %>% mutate(id_dlnm2 = paste0(id_player, "-", season))
+d_weekly = d_weekly %>% mutate(id_player = as.character(id_player))
+d_weekly = d_weekly %>% select(-stop)
+
+d_index = d_weekly %>% distinct(id_dlnm2) %>% mutate(index = 1:n())
+d_weekly = d_weekly %>% left_join(d_index, by = "id_dlnm2") %>% select(-id_dlnm2) %>% rename(id_dlnm2 = index)
+
+
+d_weekly = d_weekly %>%
+  group_by(d_imp, id_dlnm2) %>% mutate(day = 1:n()) %>% ungroup()
+
+# make DLNM cross basis
+# since we have symptoms at the weekly level, and training at the daily level
+# we will only consider the training that happened before that week
+# at the daily level
+d_weekly = d_weekly %>% 
+  group_by(d_imp, id_dlnm2) %>% 
+  mutate(daily_jump_lag = lag(jump_height_perc_sum),
+         daily_jump_n_lag = lag(jumps_n),
+         daily_jump_h_lag = lag(jump_height_sum)) %>% ungroup()
+
+# remember now that 0 is the day before the symptoms-week
+# we want to look 21 days into the past, that is day number 20
+lag_min = 0
+lag_max = 20
+
+# find start and stop times
+d_weekly = d_weekly %>% group_by(d_imp, id_dlnm2) %>% 
+  rename(stop = day) %>% 
+  mutate(enter = lag(stop),
+         enter = ifelse(is.na(enter), 0, enter)) %>% ungroup()
+
+l_weekly = (d_weekly %>% group_by(d_imp) %>% nest())$data
+l_tl_hist = l_weekly %>% map(. %>% select(id_player, season, id_dlnm2, daily_jump_lag, stop) %>% 
+                               arrange(id_dlnm2, stop))
+l_tl_hist_spread_day = 
+  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_lag)  %>% 
+                      group_by(id_dlnm2) %>% 
+                      fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                      select(-id_dlnm2, -id_player, -season) %>% as.matrix)
+
+# for each individual, for each of these exit times, we will extract the exposure history 
+# for the given lag-time which we are interested in
+# This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+l_q_mat = list()
+for(i in 1:length(l_tl_hist)){
+
+  l_q_mat[[i]] = map2(.x = l_tl_hist[[i]]$id_dlnm2, 
+              .y = l_tl_hist[[i]]$stop, 
+              ~exphist(l_tl_hist_spread_day[[i]][.x,], .y, c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+}
+
+# subjectively placed knots
+# since the data is so skewed
+# hist(d_weekly$daily_jump_lag)
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = c(2500, 5000, 9000)),
+                                        arglag = list(fun="poly", degree = 2)))
+
+# to ensure that he countdown for number of weeks 
+# starts from the first symptom-free week, 
+# OR at the beginning of a season, given that the season starts symptom free
+d_symptomfree_weeks = d_weekly %>% group_by(d_imp, id_dlnm) %>% 
+  filter(!(status == 0 & inj_knee_filled == 1)) %>% 
+  mutate(week = difftime(max(date)+7, date, units = "weeks"),
+           week = as.numeric(round(rev(week))),
+           day = 1:n()) %>% 
+           ungroup() %>% 
+           select(d_imp, id_dlnm, date, week)
+
+d_weekly_j = d_weekly %>% left_join(d_symptomfree_weeks, by = c("d_imp", "id_dlnm", "date"))
+
+# we imputed injuries to make it easier to calculate the DLNM
+# but we won't impute the missing data in our final analysis
+# we remove the imputed values
+pos_missing = which(is.na(d_analysis_selected$inj_knee_filled))
+d_weekly_j = d_weekly_j %>%
+  mutate(status = case_when(row_number() %in% pos_missing ~ NA_real_, TRUE ~ status)) 
+
+# now ensure that weekly values during symptom-weeks are missing data
+# so these rows will automatically be removed in the analysis
+d_weekly_j = d_weekly_j %>% mutate(jumps_height_weekly = 
+                                 case_when(inj_knee_filled == 1 & 
+                                             status == 0 ~ NA_real_,
+                                                     TRUE ~ jumps_height_weekly),
+                                 age = 
+                                   case_when(inj_knee_filled == 1 & 
+                                               status == 0 ~ NA_real_,
+                                             TRUE ~ age))
+
+cb_dlnm_1 = l_cb_dlnm[[1]]
+fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_1 + 
+               season + position + age + weight + (1|id_player), 
+             data = d_weekly_j %>% filter(d_imp == 1),
+             family=binomial(link="cloglog"))
+parameters::parameters(fit2, exponentiate = TRUE)
+
+fit3 = glmer(status ~ ns(week, 4) + cb_dlnm_1 + 
+               season + position + age + weight + (1|id_player), 
+             data = d_weekly_j %>% filter(d_imp == 1),
+             family=binomial(link="cloglog"))
+parameters::parameters(fit3, exponentiate = TRUE)
+
+AIC(fit2)
+AIC(fit3)
+
+
+#---------------------------------------------- splitting jump frequency and jump height
+
+l_tl_hist_n = l_weekly %>% map(. %>% select(id_player, season, id_dlnm2, daily_jump_n_lag, stop) %>% 
+                               arrange(id_dlnm2, stop))
+l_tl_hist_spread_day_n = 
+  l_tl_hist_n %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_n_lag)  %>% 
+                      group_by(id_dlnm2) %>% 
+                      fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                      select(-id_dlnm2, -id_player, -season) %>% as.matrix)
+
+# for each individual, for each of these exit times, we will extract the exposure history 
+# for the given lag-time which we are interested in
+# This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+l_q_mat_n = list()
+for(i in 1:length(l_tl_hist_n)){
+  
+  l_q_mat_n[[i]] = map2(.x = l_tl_hist_n[[i]]$id_dlnm2, 
+                      .y = l_tl_hist_n[[i]]$stop, 
+                      ~exphist(l_tl_hist_spread_day_n[[i]][.x,], .y, c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+}
+
+# subjectively placed knots
+# since the data is so skewed
+# hist(d_weekly$daily_jump_n_lag)
+l_cb_dlnm_n = l_q_mat_n %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = c(50, 80, 120)),
+                                        arglag = list(fun="poly", degree = 2)))
+
+
+#---- height
+
+l_tl_hist_h = l_weekly %>% map(. %>% select(id_player, season, id_dlnm2, daily_jump_h_lag, stop) %>% 
+                                 arrange(id_dlnm2, stop))
+l_tl_hist_spread_day_h = 
+  l_tl_hist_h %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_h_lag)  %>% 
+                        group_by(id_dlnm2) %>% 
+                        fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                        select(-id_dlnm2, -id_player, -season) %>% as.matrix)
+
+# for each individual, for each of these exit times, we will extract the exposure history 
+# for the given lag-time which we are interested in
+# This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+l_q_mat_h = list()
+for(i in 1:length(l_tl_hist_h)){
+  
+  l_q_mat_h[[i]] = map2(.x = l_tl_hist_h[[i]]$id_dlnm2, 
+                        .y = l_tl_hist_h[[i]]$stop, 
+                        ~exphist(l_tl_hist_spread_day_h[[i]][.x,], .y, c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+}
+
+# subjectively placed knots
+# since the data is so skewed
+# hist(d_weekly$daily_jump_h_lag)
+l_cb_dlnm_h = l_q_mat_h %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                            argvar = list(fun="ns", knots = c(2500, 5000, 8000)),
+                                            arglag = list(fun="poly", degree = 2)))
+
+cb_dlnm_n_1 = l_cb_dlnm_n[[1]]
+fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_n_1 + 
+               season + position + age + (1|id_player), 
+             data = d_weekly_j %>% filter(d_imp == 1),
+             family=binomial(link="cloglog"))
+parameters::parameters(fit2, exponentiate = TRUE)
+
+cb_dlnm_h_1 = l_cb_dlnm_h[[1]]
+fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_h_1 + 
+               season + position + age + (1|id_player), 
+             data = d_weekly_j %>% filter(d_imp == 1),
+             family=binomial(link="cloglog"))
+parameters::parameters(fit2, exponentiate = TRUE)
+
 
 #-------------------------- run cloglog regression
 
+
 # make DLNM cross basis
+# since we have symptoms at the weekly level, and training at the daily level
+# we will only consider the training that happened before that week
+# at the daily level
+d_weekly = d_weekly %>% 
+  group_by(d_imp, id_dlnm) %>% 
+  mutate(daily_jump_lag = lag(jump_height_perc_sum)) %>% ungroup()
 
-d_weekly %>% View()
+
+d_weekly %>% filter(d_imp == 1, id_player == 1) %>% View()
+
+# remember now that 0 is the day before the symptoms-week
+# we want to look 35 days into the past, that is day number 34
+lag_min = 0
+lag_max = 34
 
 
+# find start and stop times
+d_weekly = d_weekly %>% group_by(d_imp, id_dlnm) %>% 
+  rename(stop = day) %>% 
+  mutate(enter = lag(stop),
+         enter = ifelse(is.na(enter), 0, enter)) %>% ungroup()
+
+# function for calculating the q matrix (needed for DLNM) given the survival data in counting process form
+# and the exposure history spread in wide format in a matrix
+calc_q_matrix = function(d_tl_hist_wide, id, exit){
+  
+  id = id
+  exit = exit
+  
+  # for each individual, for each of these exit times, we will extract the exposure history 
+  # for the given lag-time which we are interested in
+  # This is called the Q-matrix. The Q-matrix should be nrow(dataspl) X 0:lag_max dimensions.
+  q = exit %>% map(., ~exphist(d_tl_hist_wide, ., c(lag_min, lag_max))) %>% 
+    do.call("rbind", .)
+  q
+}
+
+l_weekly = (d_weekly %>% group_by(d_imp) %>% nest())$data
+d_weekly = d_weekly %>% filter(d_imp == 1)
+
+l_tl_hist = l_weekly %>% map(. %>% select(id_player, season, id_dlnm, daily_jump_lag, stop) %>% 
+                                   arrange(id_dlnm, stop))
+l_tl_hist_spread_day = 
+  l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_lag)  %>% 
+                      group_by(id_dlnm) %>% 
+                      fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
+                      select(-id_dlnm, -id_player, -season) %>% as.matrix)
+
+# finding the Q matrix for DLNM
+# Don't worry if there are any missing data (NA) in the past
+# DLNM will model based on the data available
+l_q_mat = map2(.x = l_tl_hist,
+               .y = l_tl_hist_spread_day, 
+               ~calc_q_matrix(.y, .x$id_dlnm, .x$stop))
+
+# subjectively placed knots
+# since the data is so skewed
+# hist(d_weekly$daily_jump_lag)
+l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
+                                        argvar = list(fun="ns", knots = c(2500, 5000, 9000)),
+                                        arglag = list(fun="ns", knots = 3)))
 
 library(lme4) # for mixed models
 fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + (1|id_player), 
@@ -204,6 +469,14 @@ fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + positi
 parameters::parameters(fit1, exponentiate = TRUE)
 
 AIC(fit1)
+
+cb_dlnm_1 = l_cb_dlnm[[1]]
+fit2 = glmer(status ~ ns(week, 4) + cb_dlnm_1 + season + position + age + (1|id_player), 
+             data = d_weekly %>% filter(d_imp == 1),
+             family=binomial(link="cloglog"))
+parameters::parameters(fit2, exponentiate = TRUE)
+
+AIC(fit2)
 
 
 
@@ -216,19 +489,6 @@ d_weekly_dist = d_weekly %>% group_by(d_imp, id_dlnm) %>% arrange(id_event, desc
                                       jumps_height_weekly_lead, jumps_height_weekly)) %>%
           ungroup()
 
-
-d_surv %>% filter(d_imp == 1, id_player == 1) %>% 
-  select(stop, inj_knee_filled, status, jumps_height_weekly) %>% View()
-
-d_weekly %>% filter(d_imp == 1, id_player == 1) %>% 
-  select(stop, inj_knee_filled, status, week, jumps_height_weekly, 
-         jumps_height_weekly_lead) %>% View()
-
-
-d_weekly_dist %>% filter(d_imp == 1, id_player == 1) %>% View()
-
-
-
 #------------------------------------------- discrete time analysis
 library(lme4)
 fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + (1|id_player), 
@@ -240,15 +500,14 @@ AIC(fit1)
 
 
 library(ggeffects)
-
+library(sjPlot)
 preds_jumph = ggpredict(
     fit1, "jumps_height_weekly [all]", 
     condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", week = 3),
     vcov.fun = "vcovCR", 
     vcov.type = "CR0", 
     vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
-    type = "re.zi") %>% as.tibble()
-  preds
+    type = "re.zi") %>% as_tibble()
   
 ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) + 
   geom_line()
@@ -260,7 +519,7 @@ preds_week = ggpredict(
   vcov.fun = "vcovCR", 
   vcov.type = "CR0", 
   vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
-  type = "re.zi") %>% as.tibble()
+  type = "re.zi") %>% as_tibble()
 
 ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
   geom_line()
