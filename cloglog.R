@@ -147,8 +147,7 @@ d_surv = d_strata %>% group_by(d_imp, id_player, season) %>%
 d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
                            position = as.factor(position))
 
-# add event id so that we may calculate the Q matrix per event
-# we also need variable that we may stratify on
+# add event id to separate intervals
 # the intervals in which the player is at risk (i.e. not while they already have symptoms)
 d_surv = d_surv %>% group_by(d_imp, id_player, season) %>% 
                     mutate(status = ifelse(lag(inj_knee_filled) == 0 & 
@@ -156,8 +155,28 @@ d_surv = d_surv %>% group_by(d_imp, id_player, season) %>%
                            status = ifelse(is.na(status), 0, status)) %>% ungroup()
 d_surv = d_surv %>% add_event_id(status)
 
+# but also make sure that a new interval starts at the start of each season
+# (id_event does not take this into account)
+# confusingly, I called this id_dlnm, to be used in the DLNM calculation later
+# however, we decided to include training load data from the previous interval 
+# (if it was in the same season) in the DLNM calculation, and this wasn't used for that after all
+# We still use id_dlnm later on to delineate each individual interval for other reasons
 d_surv = d_surv %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
                            inj_knee_filled_fixed = ifelse(status == 1, 2, inj_knee_filled))
+
+# make a variable that is 0 if the previous interval was in the previous season
+# and 1 if the previous interval was a bout of symptoms
+d_first_interval_season = d_surv %>%  
+  group_by(id_player) %>% 
+  arrange(id_season, id_event) %>% 
+  distinct(id_season, .keep_all = TRUE) %>% 
+  select(id_player, id_dlnm) %>% 
+  arrange(id_player, id_dlnm) %>% 
+  mutate(prev_symptoms = 0) %>% ungroup()
+
+d_surv = d_surv %>% 
+  left_join(d_first_interval_season, by = c("id_player", "id_dlnm")) %>% 
+  mutate(prev_symptoms = ifelse(is.na(prev_symptoms), 1, prev_symptoms))
 
 # labelling intervals as being from asympt to sympt or sympt to asympt
 
@@ -177,7 +196,7 @@ d_surv = d_surv %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_even
 # this is why we calculate the lead for this week
 d_weekly = d_surv %>%
   select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
-         jump_height_perc_sum, status, inj_knee_filled, all_of(conf_cols), stop) %>% 
+         jump_height_perc_sum, status, inj_knee_filled, prev_symptoms, all_of(conf_cols), stop) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
   ungroup() %>%
@@ -203,14 +222,11 @@ AIC(fit1)
 
 #------------------------------------- DLNM with the missing data method-----------------
 
-
-# fixme!
-# how should weekly load be assessed?
-# jumps_height_weekly = ifelse(status == 1,
-#                             jumps_height_weekly_lead, jumps_height_weekly)
+# even though a new interval starts, we still want the training load data
+# that happened in the previous interval as part of the DLNM
 d_weekly = d_surv %>%
   select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
-         jump_height_perc_sum, status, inj_knee_filled, all_of(conf_cols), stop) %>% 
+         jump_height_perc_sum, status, prev_symptoms, inj_knee_filled, all_of(conf_cols), stop) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
   ungroup() 
@@ -308,13 +324,13 @@ d_weekly_j = d_weekly_j %>% mutate(jumps_height_weekly =
 
 cb_dlnm_1 = l_cb_dlnm[[1]]
 fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_1 + 
-               season + position + age + weight + (1|id_player), 
+               season + position + age + weight + prev_symptoms + (1|id_player), 
              data = d_weekly_j %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit2, exponentiate = TRUE)
 
 fit3 = glmer(status ~ ns(week, 4) + cb_dlnm_1 + 
-               season + position + age + weight + (1|id_player), 
+               season + position + age + weight + prev_symptoms + (1|id_player), 
              data = d_weekly_j %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit3, exponentiate = TRUE)
@@ -383,18 +399,18 @@ l_cb_dlnm_h = l_q_mat_h %>% map(~crossbasis(., lag=c(lag_min, lag_max),
                                             arglag = list(fun="poly", degree = 2)))
 
 cb_dlnm_n_1 = l_cb_dlnm_n[[1]]
-fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_n_1 + 
-               season + position + age + (1|id_player), 
+fit5 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_n_1 + 
+               season + position + age + prev_symptoms + (1|id_player), 
              data = d_weekly_j %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
-parameters::parameters(fit2, exponentiate = TRUE)
+parameters::parameters(fit5, exponentiate = TRUE)
 
 cb_dlnm_h_1 = l_cb_dlnm_h[[1]]
-fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_h_1 + 
-               season + position + age + (1|id_player), 
+fit6 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_h_1 + 
+               season + position + age + jump_height_max + (1|id_player), 
              data = d_weekly_j %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
-parameters::parameters(fit2, exponentiate = TRUE)
+parameters::parameters(fit6, exponentiate = TRUE)
 
 
 #-------------------------- run cloglog regression
