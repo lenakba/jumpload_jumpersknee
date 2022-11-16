@@ -126,7 +126,8 @@ add_event_id = function(d, status){
 d_analysis_selected = d_analysis  %>% 
   select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, all_of(conf_cols))
 
-# fixme! better missing solution.
+# imputed missing outcome data - for now. This is only temprorary while we calculate DLNM.
+# we will return the missing values later.
 d_strata = d_analysis_selected %>% group_by(d_imp, id_player, season) %>% 
   fill(inj_knee_filled, .direction = "downup") 
 
