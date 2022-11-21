@@ -178,18 +178,6 @@ d_surv = d_surv %>%
   left_join(d_first_interval_season, by = c("id_player", "id_dlnm")) %>% 
   mutate(prev_symptoms = ifelse(is.na(prev_symptoms), 1, prev_symptoms))
 
-# labelling intervals as being from asympt to sympt or sympt to asympt
-
-# d_surv %>% group_by(d_imp, id_player) %>% 
-#   mutate(interval_type = 
-#                     case_when(status == 1 & inj_knee_filled == 1 & 
-#                              lag(inj_knee_filled) == 0 ~ "asymptomatic",
-#                              status == 1 & inj_knee_filled == 0 & 
-#                              lag(inj_knee_filled) == 1 ~ "symptomatic",
-#                              TRUE ~ NA_character_)) %>% 
-#   filter(d_imp == 1, id_player == 1) %>% View()
-
-
 # we have to remove intervals of pain before starting a new
 # interval with week = 1
 # but, the final week needs the weekly sum from the last date, not the first
