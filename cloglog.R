@@ -125,6 +125,8 @@ add_event_id = function(d, status){
 # from asymptomatic to any symptoms
 d_analysis_selected = d_analysis  %>% 
   select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, all_of(conf_cols))
+d_analysis_selected = d_analysis_selected %>% mutate(inj_knee_unfilled = inj_knee_filled)
+
 
 # imputed missing outcome data - for now. This is only temprorary while we calculate DLNM.
 # we will return the missing values later.
@@ -184,7 +186,7 @@ d_surv = d_surv %>%
 # this is why we calculate the lead for this week
 d_weekly = d_surv %>%
   select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
-         jump_height_perc_sum, status, inj_knee_filled, prev_symptoms, all_of(conf_cols), stop) %>% 
+         jump_height_perc_sum, status, inj_knee_filled, prev_symptoms, all_of(conf_cols), stop, inj_knee_unfilled) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
   ungroup() %>%
@@ -196,17 +198,74 @@ d_weekly = d_surv %>%
 d_weekly = d_weekly %>% mutate(id_player = as.character(id_player))
 d_weekly = d_weekly %>% select(-stop)
 
+# we imputed injuries to make it easier to calculate the DLNM
+# but we won't impute the missing data in our final analysis
+# we remove the imputed values
+d_weekly_unimputed = d_weekly %>%
+  mutate(status = case_when(is.na(inj_knee_unfilled) ~ NA_real_, TRUE ~ status)) 
 
 # model without DLNM
-
 library(lme4) # for mixed models
 fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + weight + (1|id_player), 
-             data = d_weekly %>% filter(d_imp == 1),
+             data = d_weekly_unimputed %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit1, exponentiate = TRUE)
 
 AIC(fit1)
 
+# make figures showing the risk per level of jump load
+# and for each number of weeks
+library(ggeffects)
+library(sjPlot)
+preds_jumph = ggpredict(
+  fit1, "jumps_height_weekly [all]", 
+  condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", week = 3),
+  vcov.fun = "vcovCR", 
+  vcov.type = "CR0", 
+  vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
+  type = "re.zi") %>% as_tibble()
+
+preds_week = ggpredict(
+  fit1, "week [all]", 
+  condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", jumps_height_weekly = 2724),
+  vcov.fun = "vcovCR", 
+  vcov.type = "CR0", 
+  vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
+  type = "re.zi") %>% as_tibble()
+
+library(lmisc)
+text_size = 16
+ostrc_theme =  theme(panel.border = element_blank(), 
+                     panel.background = element_blank(),
+                     panel.grid = element_blank(),
+                     axis.line = element_line(color = nih_distinct[4]),
+                     strip.background = element_blank(),
+                     strip.text.x = element_text(size = text_size, 
+                                                 family="Trebuchet MS", 
+                                                 colour="black", 
+                                                 face = "bold", hjust = -0.01),
+                     axis.ticks = element_line(color = nih_distinct[4]))
+
+plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) + 
+  geom_line(size = 0.8) +
+  theme_line(text_size) +
+  ostrc_theme +
+  xlab("Weekly jump load (arb. u)") +
+  ylab("Probability of symptoms") +
+  scale_y_continuous(labels = axis_percent)
+
+plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
+  geom_line(size = 0.8) + 
+  theme_line(text_size) +
+  ostrc_theme +
+  xlab("Number of weeks without symptoms") +
+  ylab("Probability of symptoms") +
+  scale_y_continuous(labels = axis_percent)
+
+library(devEMF)
+emf("figure1_predicted_probs.emf", height = 4, width = 12)
+ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
+dev.off()
 
 #------------------------------------- DLNM with the missing data method-----------------
 
@@ -214,7 +273,7 @@ AIC(fit1)
 # that happened in the previous interval as part of the DLNM
 d_weekly = d_surv %>%
   select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
-         jump_height_perc_sum, status, prev_symptoms, inj_knee_filled, all_of(conf_cols), stop) %>% 
+         jump_height_perc_sum, status, prev_symptoms, inj_knee_filled, all_of(conf_cols), stop, inj_knee_unfilled) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
   ungroup() 
@@ -276,7 +335,7 @@ for(i in 1:length(l_tl_hist)){
 # since the data is so skewed
 # hist(d_weekly$daily_jump_lag)
 l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                        argvar = list(fun="ns", knots = c(2500, 5000, 9000)),
+                                        argvar = list(fun="ns", knots = c(2500, 5000, 8000)),
                                         arglag = list(fun="poly", degree = 2)))
 
 # to ensure that he countdown for number of weeks 
@@ -295,9 +354,8 @@ d_weekly_j = d_weekly %>% left_join(d_symptomfree_weeks, by = c("d_imp", "id_dln
 # we imputed injuries to make it easier to calculate the DLNM
 # but we won't impute the missing data in our final analysis
 # we remove the imputed values
-pos_missing = which(is.na(d_analysis_selected$inj_knee_filled))
 d_weekly_j = d_weekly_j %>%
-  mutate(status = case_when(row_number() %in% pos_missing ~ NA_real_, TRUE ~ status)) 
+  mutate(status = case_when(is.na(inj_knee_unfilled) ~ NA_real_, TRUE ~ status)) 
 
 # now ensure that weekly values during symptom-weeks are missing data
 # so these rows will automatically be removed in the analysis
@@ -310,21 +368,28 @@ d_weekly_j = d_weekly_j %>% mutate(jumps_height_weekly =
                                                status == 0 ~ NA_real_,
                                              TRUE ~ age))
 
+
 cb_dlnm_1 = l_cb_dlnm[[1]]
-fit2 = glmer(status ~ ns(week, 3) + ns(jumps_height_weekly, 3) + cb_dlnm_1 + 
-               season + position + age + weight + prev_symptoms + (1|id_player), 
+fit2 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + cb_dlnm_1 + 
+               season + position + age + weight + (1|id_player), 
              data = d_weekly_j %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit2, exponentiate = TRUE)
 
 fit3 = glmer(status ~ ns(week, 4) + cb_dlnm_1 + 
-               season + position + age + weight + prev_symptoms + (1|id_player), 
+               season + position + age + weight + (1|id_player), 
              data = d_weekly_j %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit3, exponentiate = TRUE)
 
+AIC(fit1)
 AIC(fit2)
 AIC(fit3)
+
+
+
+
+
 
 
 #---------------------------------------------- splitting jump frequency and jump height
