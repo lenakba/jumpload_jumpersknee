@@ -12,7 +12,7 @@ options(scipen = 30,
         stringsAsFactors = FALSE)
 
 data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
-d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed.rds"))
+d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed_daily.rds"))
 
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
@@ -269,7 +269,7 @@ l_cb_dlnm = l_q_mat %>% map(~crossbasis(., lag=c(lag_min, lag_max),
 
 cb = l_cb_dlnm[[1]]
 cox_freq = coxph(Surv(enter, stop, status) ~ strata(trans) + position + age + cb +
-                   jump_height_max + match + t_prevmatch,  data = d_multistate1)
+                   jump_height_max,  data = d_multistate1)
 summary(cox_freq)
 AIC(cox_freq)
 
