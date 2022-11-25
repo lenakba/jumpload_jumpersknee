@@ -173,6 +173,48 @@ d_surv = d_surv %>% add_event_id(status)
 d_surv = d_surv %>% mutate(id_dlnm = paste0(id_player, "-", season, "-", id_event),
                                inj_knee_filled_fixed = ifelse(status == 1, 2, inj_knee_filled))
 
+
+
+#--------------------------------------- calculating EWMA
+nsub = nrow(d_surv %>% distinct(id_player))
+
+# function for calculating exponentially waited moving averages
+# using similar syntax as the RA-function
+# an exponential smoothing ratio of 2/(n+1)
+# same as in williams et al. 2016
+ewma = function(x, n_days){
+  TTR::EMA(x, n = n_days, wilder = FALSE)
+}
+
+library(slider)
+# function calculates ewma on a sliding window of 21 days
+slide_ewma = function(x){
+  l = slide(x, ~ewma(., lag_max+1), .before = lag_max, step = 1, .complete = TRUE) %>% map(last)
+  l = compact(l)
+  l = unlist(l)
+  l
+}
+
+# function to nest the exposure history data by each individual, 
+# and run a user-specified function on each of their datasets in the list
+function_on_list = function(d, FUN = NULL){
+  nested_list = d %>% group_by(d_imp, id_player, season) %>% nest()
+  nested_list$data = nested_list$data %>% map(., ~FUN(.$jump_height_perc_sum_lag7))
+  l_unnest = unnest(nested_list, cols = c(data)) %>% group_by(d_imp, id_player, season) %>% 
+    mutate(day = lag_max+1:n()) %>% ungroup()
+  l_unnest
+}
+
+
+nested_list = d_surv %>% group_by(d_imp, id_player) %>% nest()
+nested_list$data = nested_list$data %>% map(., ~slide_ewma(.$jump_height_perc_sum_lag7))
+l_unnest = unnest(nested_list, cols = c(data)) %>% group_by(d_imp, id_player) %>% 
+  mutate(day = lag_max+1:n()) %>% ungroup()
+d_ewma = l_unnest %>% rename(jump_height_perc_sum_ewma = data)
+
+# attach to surv data
+d_surv = d_surv %>% left_join(d_ewma, by = c("d_imp", "id_player", "stop" = "day"))
+
 #-------------------------------------include interval-censoring---------------------------
 
 # make sure overlapping days are not included in the data
@@ -242,7 +284,7 @@ l_hist_cens_height = l_cens %>%
         group_by(id_dlnm) %>% 
         mutate(jump_height_perc_lag = lag(jump_height_perc_sum),
                jump_height_perc_lag = 
-                 ifelse(is.na(jump_height_perc_lag), mean(jump_height_perc_sum, na.rm = TRUE), jump_height_perc_lag)) %>% 
+                 ifelse(is.na(jump_height_perc_lag), median(jump_height_perc_sum, na.rm = TRUE), jump_height_perc_lag)) %>% 
         ungroup() %>% 
         arrange(stop, id_dlnm) %>% select(-jump_height_perc_sum)
   )
@@ -266,7 +308,7 @@ l_q_mat_cens_height = map2(.x = l_hist_cens_height,
 # ting = d_analysis %>% filter(d_imp == 1)
 # hist(ting$jumps_n)
 l_cb_cens_height = l_q_mat_cens_height %>% map(~crossbasis(., lag=c(lag_min, lag_max), 
-                                             argvar = list(fun="ns", knots = c(10, 100, 150)),
+                                             argvar = list(fun="ns", knots = c(1000, 5000, 8000)),
                                              arglag = list(fun="poly", degree = 2)))
 
 # fill the first 6 days that are missing weekly load
@@ -287,11 +329,47 @@ icen_fit = ic_par(Surv(enter,
                   data = d_cens1)
 summary(icen_fit)
 
-icen_fit_interaction = ic_par(Surv(enter, 
+
+#---------------------------------------- using perc max height
+
+cb_cens_height = l_cb_cens_height[[1]]
+icen_fit = ic_par(Surv(enter, 
                        stop_cens, 
                        status_cens, 
-                       type = "interval") ~ jumps_n_weekly + cb_cens + jumps_n_weekly*cb_cens, model = 'ph',
+                       type = "interval") ~ position + age + season + cb_cens_height +
+                       jumps_n_weekly, model = 'ph',
                   data = d_cens1)
+summary(icen_fit)
+
+plot(icen_fit)
+
+#---------------------------------------- using EWMA
+
+d_cens1 %>% filter(!is.na(jump_height_perc_sum_ewma)) %>% count(status_cens)
+?Surv
+data(miceData)
+data(IR_diabetes)
+
+  icen_fit = ic_par(Surv(enter, 
+                         stop_cens, 
+                         status_cens, 
+                         type = "interval") ~ position + age + season + jump_height_perc_sum_ewma +
+                      jumps_n_weekly, model = 'ph',
+                    data = d_cens1 %>% filter(!is.na(jump_height_perc_sum_ewma)) )
+summary(icen_fit)
+
+plot(icen_fit)
+
+
+
+
+
+
+
+
+#--------------------------------------------- old figure code
+
+
 
 conf_icen = exp(confint(icen_fit))
 icen_summary = summary(icen_fit)
