@@ -1,8 +1,9 @@
 library(tidyverse) # data wrangling
 library(dlnm) # distributed lag non-linear models
-library(lme4)
 library(lubridate) # to manipulate dates
 library(splines) # natural splines
+library(lme4) # for mixed models
+library(merTools) # to pool fits with Ruben's rules on mixed models
 
 # so we don't have to deal with scientific notations
 # and strings aren't automatically read as factors:
@@ -203,14 +204,38 @@ d_weekly = d_weekly %>% select(-stop)
 d_weekly_unimputed = d_weekly %>%
   mutate(status = case_when(is.na(inj_knee_unfilled) ~ NA_real_, TRUE ~ status)) 
 
-# model without DLNM
-library(lme4) # for mixed models
+# only look at weeks where they are actually at risk
+d_at_risk = d_weekly_unimputed %>% filter(jumps_height_weekly != 0)
+
+
+# run all fits on the 5 imputed datasets and pool results with Ruben's rules
+l_nested = d_at_risk %>% group_by(d_imp) %>% nest()
+l_fits = d_nested$data %>% map(., ~glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + weight + (1|id_player), 
+                            data = .,
+                            family=binomial(link="cloglog")))
+
+  fit_pooled = summary(mice::pool(l_fits), conf.int = TRUE, exponentiate = TRUE) %>% 
+    mutate_if(., is.numeric, ~round(., 3))
+  write_excel_csv(fit_pooled, paste0("asymptomatic_to_symptomatic.csv"), delim = ";", na = "")
+
+summary(mice::pool(l_fits), conf.int = TRUE, exponentiate = TRUE)
+
+#------------------------------------------ Figures
+
+# run just one model (for the figures)
 fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + weight + (1|id_player), 
-             data = d_weekly_unimputed %>% filter(d_imp == 1, jumps_height_weekly != 0),
+             data = d_at_risk %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit1, exponentiate = TRUE)
 
-AIC(fit1)
+# find distributions
+hist((d_weekly_unimputed %>% filter(d_imp==1))$jumps_height_weekly)
+dense = density((d_weekly_unimputed %>% filter(d_imp==1))$jumps_height_weekly, na.rm = TRUE)
+d_dense = bind_cols(x = dense$x, predicted = dense$y*1000) %>% filter(x > 0)
+
+hist((d_weekly_unimputed %>% filter(d_imp==1))$week)
+dense_week = density((d_weekly_unimputed %>% filter(d_imp==1))$week, na.rm = TRUE)
+d_dense_week = bind_cols(x = dense_week$x, predicted = dense_week$y)
 
 # make figures showing the risk per level of jump load
 # and for each number of weeks
@@ -246,6 +271,7 @@ ostrc_theme =  theme(panel.border = element_blank(),
                      axis.ticks = element_line(color = nih_distinct[4]))
 
 plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) + 
+  geom_area(data = d_dense, alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.8) +
   theme_line(text_size) +
   ostrc_theme +
@@ -254,6 +280,7 @@ plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) +
   scale_y_continuous(labels = axis_percent)
 
 plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
+  geom_area(data = d_dense_week, alpha = 0.3, fill = nih_distinct[1]) +
   geom_line(size = 0.8) + 
   theme_line(text_size) +
   ostrc_theme +
