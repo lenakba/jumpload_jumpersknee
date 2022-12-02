@@ -11,7 +11,7 @@ options(scipen = 30,
         stringsAsFactors = FALSE)
 
 data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
-d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed_daily.rds"))
+d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed_daily10.rds"))
 
 # define key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
@@ -27,7 +27,7 @@ lag_max = 20
 
 # select columns that may be useful in analyses
 d_analysis = d_jumpload %>% 
-  select(all_of(key_cols), 
+  dplyr::select(all_of(key_cols), 
          jump_height_sum,
          jumps_n,
          jumps_n_weekly,
@@ -119,13 +119,13 @@ add_event_id = function(d, status){
     distinct(id_player, not_unique_id) %>% mutate(id_event = 1:n())
   d_time_to_sympt = d_time_to_sympt %>% 
     left_join(d_eventid, by = c("id_player", "not_unique_id")) %>% 
-    select(-not_unique_id)
+    dplyr::select(-not_unique_id)
   d_time_to_sympt
 }
 
 # from asymptomatic to any symptoms
 d_analysis_selected = d_analysis  %>% 
-  select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, all_of(conf_cols))
+  dplyr::select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, all_of(conf_cols))
 d_analysis_selected = d_analysis_selected %>% mutate(inj_knee_unfilled = inj_knee_filled)
 
 # imputed missing outcome data - for now. This is only temprorary while we calculate DLNM.
@@ -172,7 +172,7 @@ d_first_interval_season = d_surv %>%
   group_by(id_player) %>% 
   arrange(id_season, id_event) %>% 
   distinct(id_season, .keep_all = TRUE) %>% 
-  select(id_player, id_dlnm) %>% 
+  dplyr::select(id_player, id_dlnm) %>% 
   arrange(id_player, id_dlnm) %>% 
   mutate(prev_symptoms = 0) %>% ungroup()
 
@@ -180,13 +180,59 @@ d_surv = d_surv %>%
   left_join(d_first_interval_season, by = c("id_player", "id_dlnm")) %>% 
   mutate(prev_symptoms = ifelse(is.na(prev_symptoms), 1, prev_symptoms))
 
+#--------------------------------------- calculating EWMA
+nsub = nrow(d_surv %>% distinct(id_player))
+
+# function for calculating exponentially waited moving averages
+# using similar syntax as the RA-function
+# an exponential smoothing ratio of 2/(n+1)
+# same as in williams et al. 2016
+ewma = function(x, n_days){
+  TTR::EMA(x, n = n_days, wilder = FALSE)
+}
+
+library(slider)
+# function calculates ewma on a sliding window of 21 days
+slide_ewma = function(x){
+  l = slide(x, ~ewma(., lag_max+1), .before = lag_max, step = 1, .complete = TRUE) %>% map(last)
+  l = compact(l)
+  l = unlist(l)
+  l
+}
+
+# function to nest the exposure history data by each individual, 
+# and run a user-specified function on each of their datasets in the list
+function_on_list = function(d, FUN = NULL){
+  nested_list = d %>% group_by(d_imp, id_player, season) %>% nest()
+  nested_list$data = nested_list$data %>% map(., ~FUN(.$jump_height_perc_sum_lag7))
+  l_unnest = unnest(nested_list, cols = c(data)) %>% group_by(d_imp, id_player, season) %>% 
+    mutate(day = lag_max+1:n()) %>% ungroup()
+  l_unnest
+}
+
+
+d_surv = d_surv %>% mutate(jumps_height_weekly_lag = lag(jumps_height_weekly),
+                  jumps_height_weekly_lag = ifelse(is.na(jumps_height_weekly_lag), 
+                                                   mean(jumps_height_weekly_lag, na.rm = TRUE), jumps_height_weekly_lag)
+                  )
+
+
+nested_list = d_surv %>% group_by(d_imp, id_player) %>% nest()
+nested_list$data = nested_list$data %>% map(., ~slide_ewma(.$jumps_height_weekly_lag))
+l_unnest = unnest(nested_list, cols = c(data)) %>% group_by(d_imp, id_player) %>% 
+  mutate(day = lag_max+1:n()) %>% ungroup()
+d_ewma = l_unnest %>% rename(jump_load_ewma = data)
+
+# attach to surv data
+d_surv = d_surv %>% left_join(d_ewma, by = c("d_imp", "id_player", "stop" = "day"))
+
 # we have to remove intervals of pain before starting a new
 # interval with week = 1
 # but, the final week needs the weekly sum from the last date, not the first
 # this is why we calculate the lead for this week
 d_weekly = d_surv %>%
-  select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
-         jump_height_perc_sum, status, inj_knee_filled, prev_symptoms, all_of(conf_cols), stop, inj_knee_unfilled) %>% 
+  dplyr::select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
+         jump_height_perc_sum, jump_load_ewma, status, inj_knee_filled, prev_symptoms, all_of(conf_cols), stop, inj_knee_unfilled) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
   ungroup() %>%
@@ -196,7 +242,7 @@ d_weekly = d_surv %>%
                                 day = 1:n()) %>% ungroup()
 
 d_weekly = d_weekly %>% mutate(id_player = as.character(id_player))
-d_weekly = d_weekly %>% select(-stop)
+d_weekly = d_weekly %>% dplyr::select(-stop)
 
 # we imputed injuries to make it easier to calculate the DLNM
 # but we won't impute the missing data in our final analysis
@@ -210,20 +256,19 @@ d_at_risk = d_weekly_unimputed %>% filter(jumps_height_weekly != 0)
 
 # run all fits on the 5 imputed datasets and pool results with Ruben's rules
 l_nested = d_at_risk %>% group_by(d_imp) %>% nest()
-l_fits = d_nested$data %>% map(., ~glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + weight + (1|id_player), 
+l_fits = l_nested$data %>% map(., ~glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + jump_load_ewma + season + position + age + weight + (1|id_player), 
                             data = .,
                             family=binomial(link="cloglog")))
 
   fit_pooled = summary(mice::pool(l_fits), conf.int = TRUE, exponentiate = TRUE) %>% 
     mutate_if(., is.numeric, ~round(., 3))
-  write_excel_csv(fit_pooled, paste0("asymptomatic_to_symptomatic.csv"), delim = ";", na = "")
-
-summary(mice::pool(l_fits), conf.int = TRUE, exponentiate = TRUE)
+  write_excel_csv(fit_pooled, paste0("asymptomatic_to_symptomatic_ewma.csv"), delim = ";", na = "")
 
 #------------------------------------------ Figures
 
 # run just one model (for the figures)
-fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + weight + (1|id_player), 
+fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + jump_load_ewma + season + 
+               position + age + weight  + (1|id_player), 
              data = d_at_risk %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit1, exponentiate = TRUE)
@@ -298,7 +343,7 @@ dev.off()
 # even though a new interval starts, we still want the training load data
 # that happened in the previous interval as part of the DLNM
 d_weekly = d_surv %>%
-  select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
+  dplyr::select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
          jump_height_perc_sum, status, prev_symptoms, inj_knee_filled, all_of(conf_cols), stop, inj_knee_unfilled) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
@@ -306,10 +351,10 @@ d_weekly = d_surv %>%
 
 d_weekly = d_weekly %>% mutate(id_dlnm2 = paste0(id_player, "-", season))
 d_weekly = d_weekly %>% mutate(id_player = as.character(id_player))
-d_weekly = d_weekly %>% select(-stop)
+d_weekly = d_weekly %>% dplyr::select(-stop)
 
 d_index = d_weekly %>% distinct(id_dlnm2) %>% mutate(index = 1:n())
-d_weekly = d_weekly %>% left_join(d_index, by = "id_dlnm2") %>% select(-id_dlnm2) %>% rename(id_dlnm2 = index)
+d_weekly = d_weekly %>% left_join(d_index, by = "id_dlnm2") %>% dplyr::select(-id_dlnm2) %>% rename(id_dlnm2 = index)
 
 
 d_weekly = d_weekly %>%
@@ -337,13 +382,13 @@ d_weekly = d_weekly %>% group_by(d_imp, id_dlnm2) %>%
          enter = ifelse(is.na(enter), 0, enter)) %>% ungroup()
 
 l_weekly = (d_weekly %>% group_by(d_imp) %>% nest())$data
-l_tl_hist = l_weekly %>% map(. %>% select(id_player, season, id_dlnm2, daily_jump_lag, stop) %>% 
+l_tl_hist = l_weekly %>% map(. %>% dplyr::select(id_player, season, id_dlnm2, daily_jump_lag, stop) %>% 
                                arrange(id_dlnm2, stop))
 l_tl_hist_spread_day = 
   l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_lag)  %>% 
                       group_by(id_dlnm2) %>% 
                       fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                      select(-id_dlnm2, -id_player, -season) %>% as.matrix)
+                      dplyr::select(-id_dlnm2, -id_player, -season) %>% as.matrix)
 
 # for each individual, for each of these exit times, we will extract the exposure history 
 # for the given lag-time which we are interested in
@@ -373,7 +418,7 @@ d_symptomfree_weeks = d_weekly %>% group_by(d_imp, id_dlnm) %>%
            week = as.numeric(round(rev(week))),
            day = 1:n()) %>% 
            ungroup() %>% 
-           select(d_imp, id_dlnm, date, week)
+           dplyr::select(d_imp, id_dlnm, date, week)
 
 d_weekly_j = d_weekly %>% left_join(d_symptomfree_weeks, by = c("d_imp", "id_dlnm", "date"))
 
@@ -420,13 +465,13 @@ AIC(fit3)
 
 #---------------------------------------------- splitting jump frequency and jump height
 
-l_tl_hist_n = l_weekly %>% map(. %>% select(id_player, season, id_dlnm2, daily_jump_n_lag, stop) %>% 
+l_tl_hist_n = l_weekly %>% map(. %>% dplyr::select(id_player, season, id_dlnm2, daily_jump_n_lag, stop) %>% 
                                arrange(id_dlnm2, stop))
 l_tl_hist_spread_day_n = 
   l_tl_hist_n %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_n_lag)  %>% 
                       group_by(id_dlnm2) %>% 
                       fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                      select(-id_dlnm2, -id_player, -season) %>% as.matrix)
+                      dplyr::select(-id_dlnm2, -id_player, -season) %>% as.matrix)
 
 # for each individual, for each of these exit times, we will extract the exposure history 
 # for the given lag-time which we are interested in
@@ -450,13 +495,13 @@ l_cb_dlnm_n = l_q_mat_n %>% map(~crossbasis(., lag=c(lag_min, lag_max),
 
 #---- height
 
-l_tl_hist_h = l_weekly %>% map(. %>% select(id_player, season, id_dlnm2, daily_jump_h_lag, stop) %>% 
+l_tl_hist_h = l_weekly %>% map(. %>% dplyr::select(id_player, season, id_dlnm2, daily_jump_h_lag, stop) %>% 
                                  arrange(id_dlnm2, stop))
 l_tl_hist_spread_day_h = 
   l_tl_hist_h %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_h_lag)  %>% 
                         group_by(id_dlnm2) %>% 
                         fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                        select(-id_dlnm2, -id_player, -season) %>% as.matrix)
+                        dplyr::select(-id_dlnm2, -id_player, -season) %>% as.matrix)
 
 # for each individual, for each of these exit times, we will extract the exposure history 
 # for the given lag-time which we are interested in
@@ -536,13 +581,13 @@ calc_q_matrix = function(d_tl_hist_wide, id, exit){
 l_weekly = (d_weekly %>% group_by(d_imp) %>% nest())$data
 d_weekly = d_weekly %>% filter(d_imp == 1)
 
-l_tl_hist = l_weekly %>% map(. %>% select(id_player, season, id_dlnm, daily_jump_lag, stop) %>% 
+l_tl_hist = l_weekly %>% map(. %>% dplyr::select(id_player, season, id_dlnm, daily_jump_lag, stop) %>% 
                                    arrange(id_dlnm, stop))
 l_tl_hist_spread_day = 
   l_tl_hist %>% map(. %>% pivot_wider(names_from = stop, values_from = daily_jump_lag)  %>% 
                       group_by(id_dlnm) %>% 
                       fill(where(is.numeric), .direction = "downup") %>% ungroup() %>% 
-                      select(-id_dlnm, -id_player, -season) %>% as.matrix)
+                      dplyr::select(-id_dlnm, -id_player, -season) %>% as.matrix)
 
 # finding the Q matrix for DLNM
 # Don't worry if there are any missing data (NA) in the past
@@ -584,92 +629,6 @@ d_weekly_dist = d_weekly %>% group_by(d_imp, id_dlnm) %>% arrange(id_event, desc
          jumps_height_weekly = ifelse(status == 1,
                                       jumps_height_weekly_lead, jumps_height_weekly)) %>%
           ungroup()
-
-#------------------------------------------- discrete time analysis
-library(lme4)
-fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + season + position + age + (1|id_player), 
-             data = d_weekly_dist %>% filter(d_imp == 1),
-             family=binomial(link="cloglog"))
-parameters::parameters(fit1, exponentiate = TRUE)
-
-AIC(fit1)
-
-
-library(ggeffects)
-library(sjPlot)
-preds_jumph = ggpredict(
-    fit1, "jumps_height_weekly [all]", 
-    condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", week = 3),
-    vcov.fun = "vcovCR", 
-    vcov.type = "CR0", 
-    vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
-    type = "re.zi") %>% as_tibble()
-  
-ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) + 
-  geom_line()
-  
-
-preds_week = ggpredict(
-  fit1, "week [all]", 
-  condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", jumps_height_weekly = 2724),
-  vcov.fun = "vcovCR", 
-  vcov.type = "CR0", 
-  vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
-  type = "re.zi") %>% as_tibble()
-
-ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
-  geom_line()
-
-#------------- With DLNM
-
-d_weekly %>% select(d_imp, date, id_player, id_event, season, status, jump_height_perc_sum, jumps_height_weekly, week)
-
-
-d_weekly_dist
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-lag_min = 0
-lag_max = 2
-
-
-hist(d_weekly_dist$jumps_height_weekly)
-
-# finding the Q matrix for DLNM
-# Don't worry if there are any missing data (NA) in the past
-# DLNM will model based on the data available
-q_mat = tsModel::Lag((d_weekly_dist %>% filter(d_imp == 1))$jumps_height_weekly, lag_min:lag_max)
-
-# calculate crossproducts for DLNM
-# using subjectively chosen locations for knots
-# based on the range of the data (hist(d_daily_1$exposure_daily))
-cb_past_exposure = crossbasis(q_mat, lag=c(lag_min, lag_max), 
-                              argvar = list(fun="ns", knots = 3),
-                              arglag = list(fun="ns", knots = 3))
-
-
-
-fit_chronic = glmer(status ~ ns(week, 4) +  season + position + age + (1|id_player), 
-             data = d_weekly_dist %>% filter(d_imp == 1),
-             family=binomial(link="cloglog"))
-parameters::parameters(fit_chronic, exponentiate = TRUE)
-
-
-
 
 
 #----------------------- to make survival graph?
