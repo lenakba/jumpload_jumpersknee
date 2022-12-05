@@ -331,10 +331,13 @@ plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) +
   ostrc_theme +
   xlab("Number of weeks with symptoms") +
   ylab("Probability of asymptomatic") +
-  scale_y_continuous(labels = axis_percent)
+  scale_y_continuous(labels = axis_percent) +
+  theme(
+    plot.margin = margin(0.5, 0, 0, 0, "cm")
+  )
 
 library(devEMF)
-emf("figure2_predicted_probs_asymptmatic.emf", height = 4, width = 12)
+emf("figure3_predicted_probs_asymptomatic.emf", height = 4, width = 12)
 ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
 dev.off()
 
@@ -441,12 +444,6 @@ d_weekly_j = d_weekly_j %>% mutate(jumps_height_weekly =
                                      case_when(inj_knee_filled == 1 & 
                                                  status == 0 ~ NA_real_,
                                                TRUE ~ age))
-
-
-d_weekly_j %>% filter(d_imp == 1) %>% dplyr::select(id_player, date, inj_knee_filled, week, day, status) %>% View()
-
-
-d_weekly_j %>% filter(d_imp == 1) %>% summarise(sum(status == 1, na.rm = TRUE))
 
 cb_dlnm_1 = l_cb_dlnm[[1]]
 fit2 = glmer(status ~ day + cb_dlnm_1 + 
