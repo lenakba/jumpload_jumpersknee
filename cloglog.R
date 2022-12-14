@@ -13,33 +13,39 @@ options(scipen = 30,
 data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
 d_jumpload = readRDS(paste0(data_folder, "d_jumpload_multimputed_daily10.rds"))
 
-# define key columns
-key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
-conf_cols = c("age", "jump_height_max", "position", 
-              "match", "t_prevmatch", "jumps_n_weekly", "jumps_height_weekly", "preseason", "jump_height_sum", 
-              "jump_height_perc_sum","weight", "jumps_n")
+# we want the setter to be the reference value
+# when we later assess it as an independent variable in a model
+d_jumpload = d_jumpload %>% 
+  mutate(position_num = case_when(position == "Setter" ~ 0,
+                                  position == "Opposite" ~ 1,
+                                  position == "Outside" ~ 2,
+                                  position == "Middle" ~ 3),
+         position_num = factor(position_num))
 
+# objects with 
+# key columns
+# adjustment variables (conf = confounders)
+# jump load variables
+key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
+conf_cols = c("age", "position_num", "weight")
+jump_cols = c("jump_height_sum", "jumps_n", "jumps_n_weekly", 
+              "jumps_height_weekly", "jump_height_max", "jump_height_perc_sum", "load_index_KE")
 # define the min and max lag
-# we will lag the data, so lag 0
-# corresponds to the last day before the OSTRC week
+# we will lag the data by one day before calculating past jump load, 
+# so lag 0 corresponds to the last day before the OSTRC week
+# lag 20 is the 21th day before the OSTRC week (3 weeks prior)
 lag_min = 0
 lag_max = 20
 
-# select columns that may be useful in analyses
+# select columns that may be useful
 d_analysis = d_jumpload %>% 
   dplyr::select(all_of(key_cols), 
-         jump_height_sum,
-         jumps_n,
-         jumps_n_weekly,
-         jumps_height_weekly,
-         jump_height_max,
-         jump_height_perc_sum,
-         load_index_KE,
+                all_of(jump_cols),
          starts_with("knee"),
          starts_with("inj"), 
          year, month_day, season, 
          preseason,
-         age, weight, height, position,
+         height, all_of(conf_cols),
          session_type, match = Match, 
          t_prevmatch, game_type, match_sets_n = MatchSets,
          d_imp = .imp)
@@ -125,10 +131,12 @@ add_event_id = function(d, status){
 
 # from asymptomatic to any symptoms
 d_analysis_selected = d_analysis  %>% 
-  dplyr::select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, all_of(conf_cols))
+  dplyr::select(all_of(key_cols), d_imp, id_player, season, date, inj_knee_filled, 
+                all_of(conf_cols), 
+                all_of(jump_cols))
 d_analysis_selected = d_analysis_selected %>% mutate(inj_knee_unfilled = inj_knee_filled)
 
-# imputed missing outcome data - for now. This is only temprorary while we calculate DLNM.
+# imputed missing outcome data - for now. This is only temporary while we calculate DLNM.
 # we will return the missing values later.
 d_strata = d_analysis_selected %>% group_by(d_imp, id_player, season) %>% 
   fill(inj_knee_filled, .direction = "downup") 
@@ -144,10 +152,6 @@ d_surv = d_strata %>% group_by(d_imp, id_player, season) %>%
   rename(stop = day) %>% 
   mutate(enter = lag(stop),
          enter = ifelse(is.na(enter), 0, enter)) %>% ungroup()
-
-# make sure category data with number codes is treated as factors
-d_surv = d_surv %>% mutate(preseason = as.factor(preseason),
-                           position = as.factor(position))
 
 # add event id to separate intervals
 # the intervals in which the player is at risk (i.e. not while they already have symptoms)
@@ -231,8 +235,11 @@ d_surv = d_surv %>% left_join(d_ewma, by = c("d_imp", "id_player", "stop" = "day
 # but, the final week needs the weekly sum from the last date, not the first
 # this is why we calculate the lead for this week
 d_weekly = d_surv %>%
-  dplyr::select(d_imp, all_of(key_cols), id_event, id_dlnm, date, season, jumps_height_weekly, 
-         jump_height_perc_sum, jump_load_ewma, status, inj_knee_filled, prev_symptoms, all_of(conf_cols), stop, inj_knee_unfilled) %>% 
+  dplyr::select(d_imp, all_of(key_cols), 
+                id_event, id_dlnm, date, season, 
+                jumps_height_weekly, jump_height_perc_sum, jump_load_ewma, 
+                status, inj_knee_filled, prev_symptoms, 
+                all_of(conf_cols), stop, inj_knee_unfilled) %>% 
   group_by(d_imp, id_player) %>%
   mutate(jumps_height_weekly_lead = lead(jumps_height_weekly, 6)) %>%
   ungroup() %>%
@@ -253,10 +260,9 @@ d_weekly_unimputed = d_weekly %>%
 # only look at weeks where they are actually at risk
 d_at_risk = d_weekly_unimputed %>% filter(jumps_height_weekly != 0)
 
-
 # run all fits on the 5 imputed datasets and pool results with Ruben's rules
 l_nested = d_at_risk %>% group_by(d_imp) %>% nest()
-l_fits = l_nested$data %>% map(., ~glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + jump_load_ewma + season + position + age + weight + (1|id_player), 
+l_fits = l_nested$data %>% map(., ~glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + jump_load_ewma + position_num + age + weight + (1|id_player), 
                             data = .,
                             family=binomial(link="cloglog")))
 
@@ -267,8 +273,8 @@ l_fits = l_nested$data %>% map(., ~glmer(status ~ ns(week, 4) + ns(jumps_height_
 #------------------------------------------ Figures
 
 # run just one model (for the figures)
-fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + jump_load_ewma + season + 
-               position + age + weight  + (1|id_player), 
+fit1 = glmer(status ~ ns(week, 4) + ns(jumps_height_weekly, 3) + jump_load_ewma + 
+               position_num + age + weight  + (1|id_player), 
              data = d_at_risk %>% filter(d_imp == 1),
              family=binomial(link="cloglog"))
 parameters::parameters(fit1, exponentiate = TRUE)
