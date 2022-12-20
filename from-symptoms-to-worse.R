@@ -302,7 +302,7 @@ library(ggeffects)
 library(sjPlot)
 preds_jumph = ggpredict(
   fit1, "jumps_height_weekly [all]", 
-  condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", week = 3),
+  condition = c(age = 26.1, position = "Outside", id_player = "1", week = 3),
   vcov.fun = "vcovCR", 
   vcov.type = "CR0", 
   vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
@@ -310,7 +310,7 @@ preds_jumph = ggpredict(
 
 preds_week = ggpredict(
   fit1, "week [all]", 
-  condition = c(age = 26.1, position = "Outside", id_player = "1", season = "2019/2020", jumps_height_weekly = 2724),
+  condition = c(age = 26.1, position = "Outside", id_player = "1", jumps_height_weekly = 2724),
   vcov.fun = "vcovCR", 
   vcov.type = "CR0", 
   vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
@@ -336,7 +336,7 @@ plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) +
   ostrc_theme +
   xlab("Weekly jump load (arb. u)") +
   ylab("Probability of worsening") +
-  scale_y_continuous(labels = axis_percent)
+  scale_y_continuous(labels = axis_percent, limits = c(NA, 0.16))
 
 plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
   geom_area(data = d_dense_week, alpha = 0.3, fill = nih_distinct[1]) +
@@ -345,7 +345,7 @@ plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) +
   ostrc_theme +
   xlab("Number of weeks with symptoms") +
   ylab("Probability of worsening") +
-  scale_y_continuous(labels = axis_percent) +
+  scale_y_continuous(labels = axis_percent, limits = c(NA, 0.16)) +
   theme(
     plot.margin = margin(0, 0.5, 0, 0, "cm")
   )
