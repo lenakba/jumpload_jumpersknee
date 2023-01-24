@@ -310,6 +310,10 @@ preds_week = ggpredict(
   vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
   type = "re.zi") %>% as_tibble()
 
+# what was the EWMA reference value?
+d_weekly_unimputed %>% filter(d_imp == 1) %>% summarise(mean(jump_load_ewma, na.rm = TRUE))
+
+
 library(lmisc)
 text_size = 16
 ostrc_theme =  theme(panel.border = element_blank(), 
@@ -330,7 +334,8 @@ plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) +
   ostrc_theme +
   xlab("Weekly jump load (arb. u)") +
   ylab("Probability of asymptomatic") +
-  scale_y_continuous(labels = axis_percent, limits = c(NA, 0.12)) +
+  #scale_y_continuous(labels = axis_percent, limits = c(NA, 0.12)) +
+  scale_y_continuous(labels = axis_percent) +
   theme(
     plot.margin = margin(0.5, 0, 0, 0, "cm")
   )

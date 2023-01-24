@@ -316,6 +316,9 @@ preds_week = ggpredict(
   vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
   type = "re.zi") %>% as_tibble()
 
+# what was the EWMA reference value?
+d_weekly_unimputed %>% filter(d_imp == 1) %>% summarise(mean(jump_load_ewma, na.rm = TRUE))
+
 library(lmisc)
 text_size = 16
 ostrc_theme =  theme(panel.border = element_blank(), 

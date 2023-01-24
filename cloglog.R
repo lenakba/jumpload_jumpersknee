@@ -37,6 +37,14 @@ jump_cols = c("jump_height_sum", "jumps_n", "jumps_n_weekly",
 lag_min = 0
 lag_max = 20
 
+# calculate mean weekly jump load
+d_analysis %>% filter(d_imp == 1, jump_height_perc_sum != 0) %>% 
+  dplyr::select(jumps_height_weekly, jump_height_perc_sum) %>% 
+  summarise(mean(jumps_height_weekly, na.rm = TRUE),
+            sd(jumps_height_weekly, na.rm = TRUE),
+            median(jumps_height_weekly, na.rm = TRUE),
+            IQR(jumps_height_weekly, na.rm = TRUE))
+
 # select columns that may be useful
 d_analysis = d_jumpload %>% 
   dplyr::select(all_of(key_cols), 
@@ -308,6 +316,9 @@ preds_week = ggpredict(
   vcov.args = list(id_player = unique((d_weekly_dist %>% filter(d_imp == 1))$id_player)),
   type = "re.zi") %>% as_tibble()
 
+# what was the EWMA reference value?
+d_at_risk %>% filter(d_imp == 1) %>% summarise(mean(jump_load_ewma, na.rm = TRUE))
+
 library(lmisc)
 text_size = 16
 ostrc_theme =  theme(panel.border = element_blank(), 
@@ -328,7 +339,8 @@ plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) +
   ostrc_theme +
   xlab("Weekly jump load (arb. u)") +
   ylab("Probability of symptoms") +
-  scale_y_continuous(labels = axis_percent, limits = c(0, 0.07))
+  #scale_y_continuous(labels = axis_percent, limits = c(0, 0.07))+
+  scale_y_continuous(labels = axis_percent)
 
 plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
   geom_area(data = d_dense_week, alpha = 0.3, fill = nih_distinct[1]) +
