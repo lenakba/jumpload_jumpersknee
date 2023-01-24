@@ -1,133 +1,25 @@
 library(tidyverse)
 library(readxl)
 
-data_folder = "D:\\phd\\jump load\\data\\"
-col_specs = cols(
-  date = col_date(format = ""),
-  datetime = col_datetime(format = "%Y-%m-%d %H:%M:%OS"),
-  time_seconds = col_double(),
-  jump_height = col_double(),
-  session_type = col_character(),
-  jump_height_max = col_double(),
-  game_type = col_character(),
-  jump_height_max_percent = col_double(),
-  position = col_character(),
-  imputed = col_character(),
-  jump_height_max_0.1 = col_double(),
-  jump_height_max_percent_0.1 = col_double(),
-  id_team_player = col_character(),
-  id_player = col_character(),
-  id_team = col_character(),
-  id_season = col_character(),
-  weight = col_double(),
-  height_ke_modified = col_double(),
-  load_index_KE = col_double(),
-  height_KE_updated = col_character(),
-  n_jump = col_double(),
-  jump_daily_n = col_double(), 
-  Knee_1 = col_character(), 
-  Knee_2 = col_character(), 
-  Knee_3 = col_character(), 
-  Knee_4 = col_character(), 
-  Knee_Total = col_character(),
-  Shoulder_1 = col_character(), 
-  Shoulder_2 = col_character(), 
-  Shoulder_3 = col_character(), 
-  Shoulder_4 = col_character(), 
-  Shoulder_Total = col_character(),
-  LowBack_1 = col_character(), 
-  LowBack_2 = col_character(),
-  LowBack_3 = col_character(), 
-  LowBack_4 = col_character(), 
-  LowBack_Total = col_character(), 
-  inj_knee = col_character(),
-  inj_knee_subst = col_character(),
-  inj_shoulder = col_character(), 
-  inj_shoulder_subst = col_character(), 
-  inj_lowback = col_character(),
-  inj_lowback_subst = col_character(),
-  season = col_character(),                     
-  season_phase = col_character(),              
-  age = col_double(),                        
-  MatchParticipation = col_character(),          
-  Match_number = col_character(),                
-  Match_Opponent = col_character(),           
-  Match_Type  = col_character(),                
-  Match_Result = col_character(),               
-  MatchSets = col_double(),             
-  Match_dateofnext = col_character(),          
-  MatchRelatedDay  = col_character(),           
-  Match = col_character()
-)
+data_folder = "O:\\Prosjekter\\Bache-Mathiesen-Biostatistikk\\Data\\volleyball\\"
+key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
 
-#d_full = read_delim(paste0(data_folder,"d_jump.csv"), delim = ";", na = "", col_types = col_specs)
-#key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
-
-
-col_specs_daily = cols(
-  date = col_date(format = ""),
-  session_type = col_character(),
-  jump_height_max = col_double(),
-  game_type = col_character(),
-  jump_height_max_percent = col_double(),
-  position = col_character(),
-  id_team_player = col_character(),
-  id_player = col_character(),
-  id_team = col_character(),
-  id_season = col_character(),
-  weight = col_double(),
-  height_ke_modified = col_double(),
-  load_index_KE = col_double(),
-  height_KE_updated = col_character(),
-  jump_height_sum = col_double(),
-  jump_daily_n = col_double(), 
-  Knee_1 = col_character(), 
-  Knee_2 = col_character(), 
-  Knee_3 = col_character(), 
-  Knee_4 = col_character(), 
-  Knee_Total = col_character(),
-  Shoulder_1 = col_character(), 
-  Shoulder_2 = col_character(), 
-  Shoulder_3 = col_character(), 
-  Shoulder_4 = col_character(), 
-  Shoulder_Total = col_character(),
-  LowBack_1 = col_character(), 
-  LowBack_2 = col_character(),
-  LowBack_3 = col_character(), 
-  LowBack_4 = col_character(), 
-  LowBack_Total = col_character(), 
-  inj_knee = col_character(),
-  inj_knee_subst = col_character(),
-  inj_shoulder = col_character(), 
-  inj_shoulder_subst = col_character(), 
-  inj_lowback = col_character(),
-  inj_lowback_subst = col_character(),
-  season = col_character(),                     
-  season_phase = col_character(),              
-  age = col_double(),                        
-  MatchParticipation = col_character(),          
-  Match_number = col_character(),                
-  Match_Opponent = col_character(),           
-  Match_Type  = col_character(),                
-  Match_Result = col_character(),               
-  MatchSets = col_double(),             
-  Match_dateofnext = col_character(),          
-  MatchRelatedDay  = col_character(),           
-  Match = col_character()
-)
-d_daily = read_delim(paste0(data_folder,"d_jump_daily.csv"), delim = ";", na = "", col_types = col_specs_daily)
+# read datasets
+d_full = read_delim(paste0(data_folder,"d_volleyball.csv"), delim = ";", na = "")
+d_daily = read_delim(paste0(data_folder,"d_jump_daily.csv"), delim = ";", na = "")
 
 #------------------------------------------ injury descriptives
 
 # number of knee complaint cases
 d_full %>% 
   arrange(desc(inj_knee)) %>% 
-  distinct(date, id_player, .keep_all = TRUE) %>% summarise(sum(inj_knee == 1, na.rm = TRUE))
+  distinct(date, id_player, .keep_all = TRUE) %>% summarise(sum(inj_knee == 1, na.rm = TRUE),
+                                                            sum(inj_knee == 0, na.rm = TRUE))
 
 # how many players have symptoms?
-d_knee_perplayer = d_all %>% count(PlayerID, inj_knee) 
+d_knee_perplayer = d_full %>% count(id_player, inj_knee) 
 
-d_knee_perplayer %>% group_by(PlayerID) %>% 
+d_knee_perplayer %>% group_by(id_player) %>% 
   summarise(injured = sum(inj_knee == 1, na.rm = TRUE)) %>% 
   count(injured)
 
@@ -140,6 +32,18 @@ mean_weeks_complaints = d_knee_perplayer %>%
   filter(inj_knee == 1) %>% 
   left_join(n_weeks_perplayer, by = "PlayerID") %>% 
   mutate(prop = n/denom, mean_prop = mean(prop))
+
+# how many substantial injuries
+inj_knee_subst_filled
+
+d_full %>% select(inj_knee_subst)
+
+d_full %>% 
+  arrange(desc(inj_knee_subst)) %>% 
+  distinct(date, id_player, .keep_all = TRUE) %>% 
+  summarise(sum(inj_knee_subst == 1, na.rm = TRUE),
+            sum(inj_knee_subst == 0, na.rm = TRUE))
+
 
 # how many our missing the OSTRC questionnaire?
 d_ostrc_completed = d_all %>% select(starts_with("completed")) %>% filter(!is.na(completed_team_ostrc))
@@ -157,9 +61,10 @@ d_ostrc_completed %>% filter(is.na(completed_today_Knee_OSTRC))
 d_all %>% summarise(sum(inj_knee == 1, na.rm = TRUE))
 
 #------------------------------------------------jump load descriptives
+d_daily_nomissing = d_daily %>% filter(!is.na(jumps_n), session_type != "no volleyball")
 
-d_daily = d_daily %>% mutate(preseason = ifelse(season_phase == "Preseason", 1, 0))
-d_daily_nomissing = d_daily %>% filter(!is.na(jump_daily_n), session_type != "no volleyball")
+d_daily %>% View()
+
 
 # function for calculating mean, median etc. of anything
 calc_descs = function(d, var){
@@ -172,11 +77,15 @@ calc_descs = function(d, var){
                   max = max(!!var, na.rm = TRUE))
 }
 
-calc_descs(d_daily_nomissing, jump_daily_n) 
-d_daily_nomissing %>% group_by(season_phase) %>% calc_descs(., jump_daily_n)
-d_daily_nomissing %>% group_by(preseason) %>% calc_descs(., jump_daily_n)
-d_daily_nomissing %>% group_by(Match) %>% calc_descs(., jump_daily_n)
-d_daily_nomissing %>% filter(season_phase != "Preseason") %>% group_by(Match) %>% calc_descs(., jump_daily_n)
+calc_descs(d_daily_nomissing, jump_height_max) 
+calc_descs(d_daily_nomissing, jumps_n) 
+calc_descs(d_daily_nomissing, jump_height_sum) 
+calc_descs(d_daily_nomissing, jump_height_perc_sum)
+
+d_daily_nomissing %>% group_by(season_phase) %>% calc_descs(., jumps_n)
+d_daily_nomissing %>% group_by(preseason) %>% calc_descs(., jumps_n)
+d_daily_nomissing %>% group_by(Match) %>% calc_descs(., jumps_n)
+d_daily_nomissing %>% filter(season_phase != "Preseason") %>% group_by(Match) %>% calc_descs(., jumps_n)
 
 #------------------------------------------------player characteristics
 
