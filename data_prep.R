@@ -102,8 +102,9 @@ d_all %>% count(SessionType)
 d_all %>% count(`Season Phase`)
 d_all %>% count(MatchParticipation) 
 
+# denote key columns
 key_cols = c("date", "id_player", "id_team", "id_team_player", "id_season")
-
+# rename variables to something practical
 d_all = d_all %>% rename(date = Date, 
                          id_team = Team, 
                          season_phase = `Season Phase`,
@@ -112,7 +113,7 @@ d_all = d_all %>% rename(date = Date,
                          id_player = PlayerID,
                          session_type = SessionType,
                          position = Position)
-
+# read baseline data
 d_baseline = read_delim(paste0(data_folder,"d_baseline.csv"), delim = ";", na = "")
 
 d_all = d_all %>% left_join(d_baseline %>% select(any_of(key_cols), weight, height), 
@@ -186,8 +187,6 @@ d_ostrc_dates_valid = d_ostrc_dates_valid %>%
 d_all = d_all %>% left_join(d_ostrc_dates_valid, 
                                       by = c("id_player", "id_team", "id_team_player", "id_season", "date"))
 
-
-
 # And fill substantial injury
 d_ostrc_dates = d_all %>% select(all_of(key_cols), inj_knee_subst) %>% filter(!is.na(inj_knee_subst))
 d_ostrc_dates = d_ostrc_dates %>% mutate(date_last = date+6)
@@ -211,11 +210,13 @@ d_all = d_all %>% left_join(d_ostrc_dates_valid,
                             by = c("id_player", "id_team", "id_team_player", "id_season", "date"))
 
 
-# IF there are two intervals separated by a singled day
-# that is, one OSTRC qustionnaire was answered 1 day late
-# AND the values on both questionnaires were 0 (no symptoms)
-# we will assume that missing day to be a 0
-
+# IF there are two intervals separated by four days or less (<=4)
+# that is, one OSTRC questionnaire was answered 4 days late
+# AND the values on both questionnaires were the same,
+# we impute the missing values with those same values.
+# for example if both OSTRC questionnaires had a 0 (no symptoms)
+# we assumed that did not change during the 4 days between them
+# and imputed a 0
 find_missingintervals = function(d, id){
   
   # one participant at a time
@@ -277,6 +278,10 @@ d_all = d_all %>% select(-starts_with("missing"), -ends_with("lag"), -ends_with(
 # write_excel_csv(d_all, paste0(data_folder, "d_volleyball.csv"), delim = ";", na = "")
 
 #---------------------------------------------------exposure data
+# we will now look at the jump load data (not just baseline and injuries)
+# check for missing data 
+# and we will calculate jump load at the daily level
+# and finally impute using multiple imputation
 d_daily = d_all %>% select(all_of(key_cols), 
                  starts_with("knee"), 
                  starts_with("Shoulder"), 
@@ -349,7 +354,8 @@ d_unimputed_daily_sessiontypes = d_unimputed_daily %>%
                                  select(date, id_player, session_type_raw = session_type) 
 d_daily_sessiontypes = d_daily %>% select(date, id_player, session_type_daily = session_type)
 d_sessiontypes = d_daily_sessiontypes %>% 
-  left_join(d_unimputed_daily_sessiontypes, by = c("date", "id_player")) %>% filter(!is.na(session_type_raw))
+  left_join(d_unimputed_daily_sessiontypes, by = c("date", "id_player")) %>% 
+  filter(!is.na(session_type_raw))
 
 # session type is not the same between daily data and the raw data
 # the daily data is more secure
@@ -372,10 +378,11 @@ d_daily_jumps = d_daily_jumps %>%
          MatchSets = as.character(MatchSets),
          MatchSets = ifelse(Match == 0, "No match", MatchSets)) 
 
-# Team B had no exposure registration for 4-11th of September 2017 (registration started 12th September), 
+# Team B had no exposure registration for 4-11th of September 2017 
+# (registration started 12th September), 
 # but they have injury data. These days should not be considered 
 # because we don't know what kind of activity plays had on these days.
-# The ionly reason we have the injury data is because the OSTRC
+# The only reason we have the injury data is because the OSTRC
 # asks about injuries "the last 7 days".
 pos_dates = which((d_daily_jumps$date %in% seq(ymd("2017-09-04"), ymd("2017-09-11"), by = "day")) & 
                     d_daily_jumps$id_team == "B")
@@ -406,6 +413,7 @@ d_daily_jumps %>% slice(-pos_dates) %>%
 # remove the original knee filled variable
 d_daily_jumps = d_daily_jumps %>% select(-knee_total_filled_orig)
 
+# write daily jump load data if you please
 # write_excel_csv(d_daily_jumps,
 #                 paste0(data_folder, "d_jump_daily.csv"),
 #                 delim = ";", na = "")
@@ -534,7 +542,6 @@ d_mult_imputed_joined = d_mult_imputed %>%
   mutate(index = 1:n()) %>% 
   left_join(d_weekly_load, by = c(".imp", "id_player", "index"))
 
-
 # repeat for jump height
 nested_list = d_mult_imputed %>% group_by(.imp, id_player) %>% nest()
 nested_list$data = nested_list$data %>% map(., ~slide_sum(.$jump_height_perc_sum, window))
@@ -553,20 +560,6 @@ d_mult_imputed_joined2 = d_mult_imputed_joined2 %>%
          jumps_n_weekly = ifelse(index %in% 1:6, NA, jumps_n_weekly),
          jumps_height_weekly = ifelse(index %in% 1:6, NA, jumps_height_weekly)
   ) %>% ungroup()
-
-# we used to calculate the percent of jump height in a different way
-# the new way is more clinically relevant
-# keeping old code just in case
-# d_mult_imputed_joined2 = 
-# d_mult_imputed_joined2 %>% 
-#   mutate(jump_max_sum = jump_height_max*jumps_n,
-#          jump_max_sum = ifelse(session_type == "no volleyball", 0, jump_max_sum),
-#          jump_height_sum_perc = (jump_height_sum/jump_max_sum)*100,
-#          jump_height_sum_perc = case_when(session_type == "no volleyball"~ 0, 
-#                                           jump_height_sum == 0 ~ 0,
-#                                           jumps_n == 0 ~ 0,
-#                                           jump_height_sum > jump_max_sum ~ 100,
-#                                           TRUE ~jump_height_sum_perc)) 
 
 # save as R object for analysis in separate script
 # saveRDS(d_mult_imputed_joined2, file = paste0(data_folder, "d_jumpload_multimputed_daily10.rds"))
