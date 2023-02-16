@@ -91,6 +91,12 @@ d_daily_nomissing %>% filter(season_phase != "Preseason") %>% group_by(Match) %>
 
 d_player = d_daily %>% distinct(id_player, .keep_all = TRUE)
 
+# number of players
+nrow(d_player)
+
+# number of player-seasons
+d_daily %>% distinct(id_player, season) %>% nrow()
+
 # 49, 36, 51, 48, 20 missing weight?
 d_player %>% select(id_player, weight) %>% tail()
 # 20 missing height?
