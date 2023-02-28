@@ -63,9 +63,6 @@ d_all %>% summarise(sum(inj_knee == 1, na.rm = TRUE))
 #------------------------------------------------jump load descriptives
 d_daily_nomissing = d_daily %>% filter(!is.na(jumps_n), session_type != "no volleyball")
 
-d_daily %>% View()
-
-
 # function for calculating mean, median etc. of anything
 calc_descs = function(d, var){
   var = enquo(var)
