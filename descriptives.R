@@ -107,3 +107,46 @@ calc_descs(d_player, jump_height_max)
 #----counts
 d_player %>% select(position)
 d_player %>% count(position)
+
+#------------------------------- jump load figures
+
+d_match_jumps = d_daily %>% 
+  select(match = Match, jumps_n) %>% 
+  filter(jumps_n != 0) %>% 
+  mutate(match_name = ifelse(match == 1, "Match", "Training"))
+
+# sample size
+sample_size = d_match_jumps %>% group_by(match) %>% summarize(num=n())
+
+library(lmisc)
+text_size = 16
+ostrc_theme =  theme(panel.border = element_blank(), 
+                     panel.background = element_blank(),
+                     panel.grid = element_blank(),
+                     axis.line = element_line(color = nih_distinct[4]),
+                     strip.background = element_blank(),
+                     strip.text.x = element_text(size = text_size, 
+                                                 family="Trebuchet MS", 
+                                                 colour="black", 
+                                                 face = "bold", hjust = -0.01),
+                     axis.ticks = element_line(color = nih_distinct[4]))
+# Plot
+plot_jumps_match_v_training = d_match_jumps %>%
+  left_join(sample_size, by = "match") %>%
+  mutate(myaxis = paste0(match_name, "\n", "n=", num)) %>%
+  ggplot(aes(x=myaxis, y=jumps_n, fill=match_name)) +
+  geom_violin(width=1.4, alpha = 0.8) +
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  theme_base(text_size) +
+  ostrc_theme +
+  ylab("n daily\njumps") +
+  xlab("") +
+  theme(legend.position = "none",
+        axis.title.y=element_text(angle=0)) +
+  scale_fill_manual(values = c(lmisc::nih_distinct[4], lmisc::nih_distinct[1]
+                                 ))
+
+png("plot_n_jumps.png", width = 8, height = 5, unit = "in", res = 600)
+plot_jumps_match_v_training
+dev.off()
+
