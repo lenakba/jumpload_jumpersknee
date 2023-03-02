@@ -338,7 +338,7 @@ plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) +
   #scale_y_continuous(labels = axis_percent, limits = c(NA, 0.12)) +
   scale_y_continuous(labels = axis_percent) +
   theme(
-    plot.margin = margin(0.5, 0, 0, 0, "cm")
+    plot.margin = margin(0.5, 0, 0.2, 0, "cm")
   )
 
 plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
@@ -350,10 +350,14 @@ plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) +
   ylab("Probability of asymptomatic") +
   scale_y_continuous(labels = axis_percent, limits = c(NA, 0.12)) +
   theme(
-    plot.margin = margin(0.5, 0, 0, 0, "cm")
+    plot.margin = margin(0.5, 0.2, 0.2, 0, "cm")
   )
 
 library(devEMF)
-emf("figure3_predicted_probs_asymptomatic.emf", height = 4, width = 12)
+emf("figure4_predicted_probs_asymptomatic.emf", height = 4, width = 12)
+ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
+dev.off()
+
+cairo_pdf("figure4_predicted_probs_asymptomatic.pdf", width = 12, height = 4)
 ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
 dev.off()

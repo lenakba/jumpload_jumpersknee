@@ -340,7 +340,10 @@ plot_load = ggplot(preds_jumph, aes(x = x, y = predicted, group = 1)) +
   ostrc_theme +
   xlab("Weekly jump load (arb. u)") +
   ylab("Probability of worsening") +
-  scale_y_continuous(labels = axis_percent, limits = c(NA, 0.16))
+  scale_y_continuous(labels = axis_percent, limits = c(NA, 0.16))  +
+  theme(
+    plot.margin = margin(0, 0.2, 0.2, 0, "cm")
+  ) 
 
 plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) + 
   geom_area(data = d_dense_week, alpha = 0.3, fill = nih_distinct[1]) +
@@ -351,10 +354,14 @@ plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) +
   ylab("Probability of worsening") +
   scale_y_continuous(labels = axis_percent, limits = c(NA, 0.16)) +
   theme(
-    plot.margin = margin(0, 0.5, 0, 0, "cm")
-  )
+    plot.margin = margin(0, 0.5, 0.2, 0, "cm")
+  ) 
 
 library(devEMF)
-emf("figure2_predicted_probs_worsening.emf", height = 4, width = 12)
+emf("figure3_predicted_probs_worsening.emf", height = 4, width = 12)
+ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
+dev.off()
+
+cairo_pdf("figure3_predicted_probs_worsening.pdf", width = 12, height = 4)
 ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
 dev.off()

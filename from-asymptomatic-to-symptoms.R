@@ -37,14 +37,6 @@ jump_cols = c("jump_height_sum", "jumps_n", "jumps_n_weekly",
 lag_min = 0
 lag_max = 20
 
-# calculate mean weekly jump load to report in results section
-d_analysis %>% filter(d_imp == 1, jump_height_perc_sum != 0) %>% 
-  dplyr::select(jumps_height_weekly, jump_height_perc_sum) %>% 
-  summarise(mean(jumps_height_weekly, na.rm = TRUE),
-            sd(jumps_height_weekly, na.rm = TRUE),
-            median(jumps_height_weekly, na.rm = TRUE),
-            IQR(jumps_height_weekly, na.rm = TRUE))
-
 # select columns that may be useful
 d_analysis = d_jumpload %>% 
   dplyr::select(all_of(key_cols), 
@@ -57,6 +49,14 @@ d_analysis = d_jumpload %>%
          session_type, match = Match, 
          t_prevmatch, game_type, match_sets_n = MatchSets,
          d_imp = .imp)
+
+# calculate mean weekly jump load to report in results section
+d_analysis %>% filter(d_imp == 1, jump_height_perc_sum != 0) %>% 
+  dplyr::select(jumps_height_weekly, jump_height_perc_sum) %>% 
+  summarise(mean(jumps_height_weekly, na.rm = TRUE),
+            sd(jumps_height_weekly, na.rm = TRUE),
+            median(jumps_height_weekly, na.rm = TRUE),
+            IQR(jumps_height_weekly, na.rm = TRUE))
 
 d_analysis = d_analysis %>% mutate_at(vars(starts_with("inj"), starts_with("knee")), ~as.numeric(.))
 
@@ -358,7 +358,10 @@ plot_weeks = ggplot(preds_week, aes(x = x, y = predicted, group = 1)) +
   scale_y_continuous(labels = axis_percent, limits = c(0, 0.07))
 
 library(devEMF)
-emf("figure1_predicted_probs.emf", height = 4, width = 12)
+emf("figure2_predicted_probs.emf", height = 4, width = 12)
 ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
 dev.off()
 
+cairo_pdf("figure2_predicted_probs.pdf", width = 12, height = 4)
+ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
+dev.off()
