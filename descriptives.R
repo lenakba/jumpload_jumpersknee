@@ -130,6 +130,7 @@ ostrc_theme =  theme(panel.border = element_blank(),
                                                  colour="black", 
                                                  face = "bold", hjust = -0.01),
                      axis.ticks = element_line(color = nih_distinct[4]))
+
 # Plot
 plot_jumps_match_v_training = d_match_jumps %>%
   left_join(sample_size, by = "match") %>%
@@ -150,3 +151,6 @@ png("plot_n_jumps.png", width = 8, height = 5, unit = "in", res = 600)
 plot_jumps_match_v_training
 dev.off()
 
+cairo_pdf("plot_n_jumps.pdf", width = 8, height = 5)
+plot_jumps_match_v_training
+dev.off()
