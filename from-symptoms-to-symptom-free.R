@@ -361,3 +361,7 @@ dev.off()
 cairo_pdf("figure4_predicted_probs_asymptomatic.pdf", width = 12, height = 4)
 ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
 dev.off()
+
+png("figure4_predicted_probs_asymptomatic.png", width = 12, height = 4, unit = "in", res = 600)
+ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
+dev.off()
