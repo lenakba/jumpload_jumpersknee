@@ -365,3 +365,7 @@ dev.off()
 cairo_pdf("figure3_predicted_probs_worsening.pdf", width = 12, height = 4)
 ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
 dev.off()
+
+png("figure3_predicted_probs_worsening.png", width = 12, height = 4, unit = "in", res = 600)
+ggpubr::ggarrange(plot_load, plot_weeks, labels = "AUTO")
+dev.off()
